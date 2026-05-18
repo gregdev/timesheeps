@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+.wrangler
+*.min.js
+*.min.css
+coverage
+.next
+.nuxt
+.cache
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+*.sql
+drizzle

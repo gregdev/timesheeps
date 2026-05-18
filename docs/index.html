@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Timesheeps • the sheep remembers so you don't have to</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
+
+      :root {
+        --bg: #faf7f2;
+        --surface: #ffffff;
+        --surface-2: #f2ece0;
+        --border: #dfd8cb;
+        --text: #2c1a0e;
+        --text-muted: #7a6a58;
+        --text-faint: #a8967e;
+        --primary: #7a9e80;
+        --primary-hover: #5e8064;
+        --radius: 6px;
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+        --font: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .hero {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 80px 24px 64px;
+        text-align: center;
+        gap: 24px;
+      }
+
+      .logo {
+        width: 120px;
+        height: 120px;
+        border-radius: 28px;
+        box-shadow: var(--shadow-md);
+      }
+
+      .hero h1 {
+        font-size: clamp(2rem, 5vw, 3rem);
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        color: var(--primary);
+      }
+
+      .hero h2 {
+        color: var(--text-muted);
+      }
+
+      .hero p {
+        font-size: 1.15rem;
+        color: var(--text-muted);
+        max-width: 480px;
+        line-height: 1.6;
+      }
+
+      .cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--primary);
+        color: #fff;
+        font-family: var(--font);
+        font-size: 1rem;
+        font-weight: 700;
+        padding: 12px 28px;
+        border-radius: var(--radius);
+        text-decoration: none;
+        box-shadow: var(--shadow-sm);
+        transition:
+          background 0.15s,
+          transform 0.1s;
+      }
+
+      .cta:hover {
+        background: var(--primary-hover);
+        transform: translateY(-1px);
+      }
+
+      .cta svg {
+        flex-shrink: 0;
+      }
+
+      .divider {
+        width: 100%;
+        max-width: 640px;
+        height: 1px;
+        background: var(--border);
+        margin: 0 24px;
+      }
+
+      .features {
+        width: 100%;
+        max-width: 640px;
+        padding: 48px 24px 64px;
+      }
+
+      .features h2 {
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+        margin-bottom: 20px;
+      }
+
+      .features ul {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .features li {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        font-size: 1rem;
+        color: var(--text);
+        line-height: 1.5;
+      }
+
+      .check {
+        flex-shrink: 0;
+        width: 22px;
+        height: 22px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 1px;
+      }
+
+      .check svg {
+        color: var(--primary);
+      }
+
+      .features li strong {
+        font-weight: 700;
+      }
+
+      .features li span {
+        color: var(--text-muted);
+      }
+
+      footer {
+        margin-top: auto;
+        padding: 24px;
+        font-size: 0.85rem;
+        color: var(--text-faint);
+        text-align: center;
+      }
+
+      footer a {
+        color: var(--text-faint);
+        text-decoration: none;
+        border-bottom: 1px solid var(--border);
+        transition: color 0.15s;
+      }
+
+      footer a:hover {
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <section class="hero">
+      <img
+        class="logo"
+        src="https://raw.githubusercontent.com/gregdev/timesheeps/main/src-tauri/icons/128x128.png"
+        alt="Timesheeps logo"
+      />
+
+      <h1>Timesheeps</h1>
+
+      <h2>The sheep remembers so you don't have to.</h2>
+
+      <p>
+        A quiet app for Windows that watches what you work on, so filling out your timesheet doesn't
+        require guessing.
+      </p>
+
+      <a class="cta" id="release-link" href="https://github.com/gregdev/timesheeps/releases/latest">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path
+            d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 10.5h-1.5v-5h1.5v5zm0-6.5h-1.5V3.5h1.5V5z"
+            fill="currentColor"
+          />
+        </svg>
+        Download latest release
+      </a>
+    </section>
+
+    <div class="divider"></div>
+
+    <section class="features">
+      <h2>What the sheep does</h2>
+      <ul>
+        <li>
+          <span class="check">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path
+                d="M1.5 5l2.5 2.5 4.5-5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <div>
+            <strong>Automatic window tracking</strong>
+            <span>— records the active app and window title in the background</span>
+          </div>
+        </li>
+        <li>
+          <span class="check">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path
+                d="M1.5 5l2.5 2.5 4.5-5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <div>
+            <strong>Visual daily timeline</strong>
+            <span>— colour-coded blocks show exactly where your time went, hour by hour</span>
+          </div>
+        </li>
+        <li>
+          <span class="check">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path
+                d="M1.5 5l2.5 2.5 4.5-5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <div>
+            <strong>Drag-to-create time entries</strong>
+            <span>— draw blocks on the timeline and assign them to projects</span>
+          </div>
+        </li>
+        <li>
+          <span class="check">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path
+                d="M1.5 5l2.5 2.5 4.5-5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <div>
+            <strong>Idle detection</strong>
+            <span>— notices when you step away and prompts you on return</span>
+          </div>
+        </li>
+        <li>
+          <span class="check">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path
+                d="M1.5 5l2.5 2.5 4.5-5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <div>
+            <strong>Noise filtering</strong>
+            <span>— ignores short windows, merges gaps, and hides apps that don't matter</span>
+          </div>
+        </li>
+        <li>
+          <span class="check">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path
+                d="M1.5 5l2.5 2.5 4.5-5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <div>
+            <strong>Stays out of the way</strong>
+            <span>
+              — lives in the system tray, everything stored locally, no accounts or cloud sync
+            </span>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <footer>
+      <a href="https://gregsmith.au">&copy; 2026 Greg Smith</a>
+    </footer>
+
+    <script>
+      fetch('https://api.github.com/repos/gregdev/timesheeps/releases/latest')
+        .then((r) => r.json())
+        .then((data) => {
+          const link = document.getElementById('release-link')
+          if (data && data.html_url) {
+            link.href = data.html_url
+            if (data.tag_name) {
+              link.childNodes[link.childNodes.length - 1].textContent = ` Download ${data.tag_name}`
+            }
+          }
+        })
+        .catch(() => {})
+    </script>
+  </body>
+</html>

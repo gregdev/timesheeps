@@ -10,6 +10,11 @@ pub struct RawActivity {
     pub ended_at: DateTime<Utc>,
     pub app_name: String,
     pub window_title: String,
+    /// HWND value captured at record time. Used as merge key so that sessions
+    /// from the same window (different titles) merge, while different windows
+    /// of the same app (e.g. two VS Code projects) stay separate.
+    /// 0 = unknown (legacy data or non-Windows).
+    pub window_id: u64,
 }
 
 // ── Merged/filtered activity block (sent to frontend) ───────────────────────
@@ -22,6 +27,19 @@ pub struct ActivityBlock {
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
     pub duration_secs: i64,
+    /// Carried from RawActivity for the second merge pass; not sent to frontend.
+    #[serde(skip)]
+    pub window_id: u64,
+}
+
+// ── Window summary (aggregate raw activity, no min-duration filter) ──────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowSummaryItem {
+    pub app_name: String,
+    pub window_title: String,
+    pub total_secs: i64,
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
@@ -33,6 +51,7 @@ pub struct Project {
     pub name: String,
     pub color: String,
     pub archived_at: Option<DateTime<Utc>>,
+    pub parent_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +59,7 @@ pub struct Project {
 pub struct CreateProject {
     pub name: String,
     pub color: String,
+    pub parent_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +68,7 @@ pub struct UpdateProject {
     pub id: i64,
     pub name: String,
     pub color: String,
+    pub parent_id: Option<i64>,
 }
 
 // ── Time entries ─────────────────────────────────────────────────────────────
@@ -134,16 +155,59 @@ pub struct Settings {
     pub idle_timeout_secs: i64,
     pub timeline_start_hour: i64,
     pub timeline_end_hour: i64,
+    pub start_on_login: bool,
+    pub snap_minutes: i64,
+    pub window_summary_min_secs: i64,
+    /// App names (case-insensitive) that should be split by window title in the
+    /// Window Activity summary instead of grouped by window ID. Useful for
+    /// browsers where each tab has a distinct title but shares the same HWND.
+    pub title_split_apps: Vec<String>,
+    /// Day of week weeks start on: 0 = Sunday, 1 = Monday.
+    pub week_starts_on: i64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            min_duration_secs: 60,
+            min_duration_secs: 300,
             merge_gap_secs: 120,
             idle_timeout_secs: 300,
             timeline_start_hour: 7,
             timeline_end_hour: 22,
+            start_on_login: true,
+            snap_minutes: 5,
+            window_summary_min_secs: 60,
+            title_split_apps: vec!["Brave".to_string(), "Chrome".to_string(), "Firefox".to_string(), "msedge".to_string(), "Opera".to_string(), "Vivaldi".to_string(), "Arc".to_string(), "Zen".to_string(), "Chromium".to_string()],
+            week_starts_on: 1,
         }
     }
+}
+
+// ── Project match rules ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMatchRule {
+    pub id: i64,
+    pub project_id: i64,
+    pub rule_type: FilterRuleType,
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateProjectMatchRule {
+    pub project_id: i64,
+    pub rule_type: FilterRuleType,
+    pub value: String,
+}
+
+// ── Suggested entries ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestedEntry {
+    pub project_id: i64,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
 }

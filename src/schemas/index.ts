@@ -14,6 +14,7 @@ export const ProjectSchema = z.object({
   name: z.string(),
   color: z.string(),
   archivedAt: z.string().nullable(),
+  parentId: z.number().nullable(),
 })
 export type Project = z.infer<typeof ProjectSchema>
 
@@ -37,12 +38,32 @@ export const FilterRuleSchema = z.object({
 })
 export type FilterRule = z.infer<typeof FilterRuleSchema>
 
+export const ProjectMatchRuleSchema = z.object({
+  id: z.number(),
+  projectId: z.number(),
+  ruleType: FilterRuleTypeSchema,
+  value: z.string(),
+})
+export type ProjectMatchRule = z.infer<typeof ProjectMatchRuleSchema>
+
+export const SuggestedEntrySchema = z.object({
+  projectId: z.number(),
+  startedAt: z.string(),
+  endedAt: z.string(),
+})
+export type SuggestedEntry = z.infer<typeof SuggestedEntrySchema>
+
 export const SettingsSchema = z.object({
   minDurationSecs: z.number(),
   mergeGapSecs: z.number(),
   idleTimeoutSecs: z.number(),
   timelineStartHour: z.number(),
   timelineEndHour: z.number(),
+  startOnLogin: z.boolean(),
+  snapMinutes: z.number(),
+  windowSummaryMinSecs: z.number(),
+  titleSplitApps: z.array(z.string()),
+  weekStartsOn: z.number(),
 })
 export type Settings = z.infer<typeof SettingsSchema>
 
@@ -52,3 +73,10 @@ export const IdleReturnEventSchema = z.object({
   idleEndedAt: z.string(),
 })
 export type IdleReturnEvent = z.infer<typeof IdleReturnEventSchema>
+
+export const WindowSummaryItemSchema = z.object({
+  appName: z.string(),
+  windowTitle: z.string(),
+  totalSecs: z.number(),
+})
+export type WindowSummaryItem = z.infer<typeof WindowSummaryItemSchema>

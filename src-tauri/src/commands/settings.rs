@@ -1,4 +1,5 @@
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::db;
 use crate::models::Settings;
@@ -11,7 +12,19 @@ pub fn get_settings(state: State<AppState>) -> Result<Settings, String> {
 }
 
 #[tauri::command]
-pub fn save_settings(settings: Settings, state: State<AppState>) -> Result<(), String> {
+pub fn save_settings(
+    settings: Settings,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::save_settings(&conn, &settings).map_err(|e| e.to_string())
+    db::save_settings(&conn, &settings).map_err(|e| e.to_string())?;
+
+    let autolaunch = app.autolaunch();
+    if settings.start_on_login {
+        autolaunch.enable().map_err(|e| e.to_string())?;
+    } else {
+        autolaunch.disable().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

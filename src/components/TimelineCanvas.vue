@@ -1,54 +1,73 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import type { TimeEntry } from '../schemas'
-import { useDayStore } from '../stores/day'
-import { useTimeline } from '../composables/useTimeline'
-import TimeRuler from './TimeRuler.vue'
-import ActivityBlockItem from './ActivityBlockItem.vue'
-import EntryTrack from './EntryTrack.vue'
-import ProjectPickerModal from './ProjectPickerModal.vue'
+  import { ref, onMounted, watch } from 'vue'
+  import type { TimeEntry } from '../schemas'
+  import { useDayStore } from '../stores/day'
+  import { useTimeline } from '../composables/useTimeline'
+  import { useEntryModal } from '../composables/useEntryModal'
+  import TimeRuler from './TimeRuler.vue'
+  import ActivityBlockItem from './ActivityBlockItem.vue'
+  import EntryTrack from './EntryTrack.vue'
+  import ProjectPickerModal from './ProjectPickerModal.vue'
 
-const dayStore = useDayStore()
-const { totalHeight, hours, minuteToY } = useTimeline()
+  const dayStore = useDayStore()
+  const { totalHeight, hours, minuteToY } = useTimeline()
+  const { pendingCreate, editingEntry } = useEntryModal()
 
-const scrollRef = ref<HTMLElement>()
-const pendingCreate = ref<{ startMinutes: number; endMinutes: number } | null>(null)
-const editingEntry = ref<TimeEntry | null>(null)
+  const scrollRef = ref<HTMLElement>()
 
-function onRequestCreate(start: number, end: number) {
-  pendingCreate.value = { startMinutes: start, endMinutes: end }
-}
+  function onRequestCreate(start: number, end: number) {
+    pendingCreate.value = { startMinutes: start, endMinutes: end, note: '' }
+  }
 
-function onEditEntry(entry: TimeEntry) {
-  editingEntry.value = entry
-}
+  function onAcceptSuggestion(projectId: number, startMinutes: number, endMinutes: number) {
+    pendingCreate.value = { startMinutes, endMinutes, note: '', projectId }
+  }
 
-async function onModalSave(projectId: number, startMinutes: number, endMinutes: number, note: string) {
-  if (editingEntry.value) {
-    await dayStore.updateEntry(editingEntry.value.id, projectId, startMinutes, endMinutes, note)
+  function onEditEntry(entry: TimeEntry) {
+    editingEntry.value = entry
+  }
+
+  async function onModalSave(
+    projectId: number,
+    startMinutes: number,
+    endMinutes: number,
+    note: string,
+  ) {
+    if (editingEntry.value) {
+      await dayStore.updateEntry(editingEntry.value.id, projectId, startMinutes, endMinutes, note)
+      editingEntry.value = null
+    } else if (pendingCreate.value) {
+      await dayStore.createEntry(projectId, startMinutes, endMinutes, note)
+      pendingCreate.value = null
+    }
+  }
+
+  async function onModalDelete(id: number) {
+    await dayStore.deleteEntry(id)
     editingEntry.value = null
-  } else if (pendingCreate.value) {
-    await dayStore.createEntry(projectId, startMinutes, endMinutes, note)
+  }
+
+  function onModalCancel() {
     pendingCreate.value = null
+    editingEntry.value = null
   }
-}
 
-async function onModalDelete(id: number) {
-  await dayStore.deleteEntry(id)
-  editingEntry.value = null
-}
+  onMounted(() => {
+    // Scroll to 8am by default
+    if (scrollRef.value) {
+      scrollRef.value.scrollTop = minuteToY(8 * 60) - 40
+    }
+  })
 
-function onModalCancel() {
-  pendingCreate.value = null
-  editingEntry.value = null
-}
-
-onMounted(() => {
-  // Scroll to 8am by default
-  if (scrollRef.value) {
-    scrollRef.value.scrollTop = minuteToY(8 * 60) - 40
-  }
-})
+  // Reset scroll to 8am when navigating to a different day
+  watch(
+    () => dayStore.selectedDate,
+    () => {
+      if (scrollRef.value) {
+        scrollRef.value.scrollTop = minuteToY(8 * 60) - 40
+      }
+    },
+  )
 </script>
 
 <template>
@@ -94,8 +113,10 @@ onMounted(() => {
         <!-- Entry track (right, user drags to create) -->
         <EntryTrack
           :entries="dayStore.timeEntries"
+          :suggestions="dayStore.suggestedEntries"
           @request-create="onRequestCreate"
           @edit="onEditEntry"
+          @accept-suggestion="onAcceptSuggestion"
         />
       </div>
     </div>
@@ -105,8 +126,8 @@ onMounted(() => {
     v-if="pendingCreate || editingEntry"
     :initial-start="(pendingCreate ?? editingEntry)!.startMinutes"
     :initial-end="(pendingCreate ?? editingEntry)!.endMinutes"
-    :initial-project-id="editingEntry?.projectId ?? null"
-    :initial-note="editingEntry?.note ?? ''"
+    :initial-project-id="editingEntry?.projectId ?? pendingCreate?.projectId ?? null"
+    :initial-note="editingEntry?.note ?? pendingCreate?.note ?? ''"
     :entry-id="editingEntry?.id ?? null"
     @save="onModalSave"
     @delete="onModalDelete"
@@ -115,82 +136,87 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.timeline-canvas {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+  .timeline-canvas {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 
-.col-headers {
-  display: flex;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
+  .col-headers {
+    display: flex;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
 
-.ruler-spacer { width: 44px; flex-shrink: 0; }
+  .ruler-spacer {
+    width: 44px;
+    flex-shrink: 0;
+  }
 
-.col-header {
-  flex: 1;
-  padding: 6px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-  border-left: 1px solid var(--border);
-}
-.entry-header { border-right: none; }
+  .col-header {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-faint);
+    border-left: 1px solid var(--border);
+  }
 
-.scroll-area {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  background: var(--bg);
-}
+  .entry-header {
+    border-right: none;
+  }
 
-.timeline-body {
-  position: relative;
-  display: flex;
-  min-width: 0;
-}
+  .scroll-area {
+    flex: 1;
+    overflow: hidden auto;
+    background: var(--bg);
+  }
 
-.grid-lines {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
+  .timeline-body {
+    position: relative;
+    display: flex;
+    min-width: 0;
+  }
 
-.grid-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: var(--grid-line);
-}
+  .grid-lines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
 
-.activity-track {
-  position: relative;
-  flex: 1;
-  border-left: 1px solid var(--border);
-  min-width: 0;
-}
+  .grid-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--grid-line);
+  }
 
-.track-divider {
-  width: 1px;
-  background: var(--border);
-  flex-shrink: 0;
-}
+  .activity-track {
+    position: relative;
+    flex: 1;
+    border-left: 1px solid var(--border);
+    min-width: 0;
+  }
 
-.empty-track {
-  position: absolute;
-  top: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 12px;
-  color: var(--text-faint);
-  white-space: nowrap;
-}
+  .track-divider {
+    width: 1px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+
+  .empty-track {
+    position: absolute;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
 </style>

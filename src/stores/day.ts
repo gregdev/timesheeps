@@ -2,26 +2,38 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { format, addDays, subDays, isToday, parseISO } from 'date-fns'
 import { api } from '../api'
-import type { ActivityBlock, TimeEntry } from '../schemas'
+import type { ActivityBlock, SuggestedEntry, TimeEntry, WindowSummaryItem } from '../schemas'
 
 export const useDayStore = defineStore('day', () => {
   const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
   const activityBlocks = ref<ActivityBlock[]>([])
   const timeEntries = ref<TimeEntry[]>([])
+  const windowSummary = ref<WindowSummaryItem[]>([])
+  const rawSuggestions = ref<SuggestedEntry[]>([])
   const loading = ref(false)
+  const loadError = ref<string | null>(null)
 
   const isViewingToday = computed(() => isToday(parseISO(selectedDate.value)))
 
-  async function loadDay(date?: string) {
+  async function loadDay(date?: string, silent = false) {
     if (date) selectedDate.value = date
-    loading.value = true
+    if (!silent) loading.value = true
     try {
-      const [blocks, entries] = await Promise.all([
+      const [blocks, entries, winSummary, suggestions] = await Promise.all([
         api.getActivityForDay(selectedDate.value),
         api.getTimeEntriesForDay(selectedDate.value),
+        api.getWindowSummaryForDay(selectedDate.value),
+        api.getSuggestedEntriesForDay(selectedDate.value),
       ])
       activityBlocks.value = blocks
       timeEntries.value = entries
+      windowSummary.value = winSummary
+      rawSuggestions.value = suggestions
+      loadError.value = null
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      loadError.value = msg
+      console.error('[timesheeps] loadDay failed:', err)
     } finally {
       loading.value = false
     }
@@ -37,24 +49,49 @@ export const useDayStore = defineStore('day', () => {
     loadDay(format(new Date(), 'yyyy-MM-dd'))
   }
 
-  async function createEntry(projectId: number, startMinutes: number, endMinutes: number, note: string) {
-    const entry = await api.createTimeEntry(selectedDate.value, projectId, startMinutes, endMinutes, note)
-    timeEntries.value = [...timeEntries.value, entry].sort((a, b) => a.startMinutes - b.startMinutes)
+  async function createEntry(
+    projectId: number,
+    startMinutes: number,
+    endMinutes: number,
+    note: string,
+  ) {
+    const entry = await api.createTimeEntry(
+      selectedDate.value,
+      projectId,
+      startMinutes,
+      endMinutes,
+      note,
+    )
+    timeEntries.value = [...timeEntries.value, entry].sort(
+      (a, b) => a.startMinutes - b.startMinutes,
+    )
     return entry
   }
 
-  async function updateEntry(id: number, projectId: number, startMinutes: number, endMinutes: number, note: string) {
+  async function updateEntry(
+    id: number,
+    projectId: number,
+    startMinutes: number,
+    endMinutes: number,
+    note: string,
+  ) {
     await api.updateTimeEntry(id, projectId, startMinutes, endMinutes, note)
-    const idx = timeEntries.value.findIndex(e => e.id === id)
+    const idx = timeEntries.value.findIndex((e) => e.id === id)
     if (idx >= 0) {
-      timeEntries.value[idx] = { ...timeEntries.value[idx], projectId, startMinutes, endMinutes, note }
+      timeEntries.value[idx] = {
+        ...timeEntries.value[idx],
+        projectId,
+        startMinutes,
+        endMinutes,
+        note,
+      }
       timeEntries.value = [...timeEntries.value].sort((a, b) => a.startMinutes - b.startMinutes)
     }
   }
 
   async function deleteEntry(id: number) {
     await api.deleteTimeEntry(id)
-    timeEntries.value = timeEntries.value.filter(e => e.id !== id)
+    timeEntries.value = timeEntries.value.filter((e) => e.id !== id)
   }
 
   const summary = computed(() => {
@@ -65,10 +102,43 @@ export const useDayStore = defineStore('day', () => {
     return map
   })
 
+  function isoToMinutes(iso: string): number {
+    const d = new Date(iso)
+    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60
+  }
+
+  const suggestedEntries = computed(() => {
+    return rawSuggestions.value
+      .map((s) => ({
+        projectId: s.projectId,
+        startMinutes: isoToMinutes(s.startedAt),
+        endMinutes: isoToMinutes(s.endedAt),
+      }))
+      .filter((s) => s.endMinutes > s.startMinutes)
+      .filter(
+        (s) =>
+          !timeEntries.value.some(
+            (e) => e.startMinutes < s.endMinutes && e.endMinutes > s.startMinutes,
+          ),
+      )
+  })
+
   return {
-    selectedDate, activityBlocks, timeEntries, loading, isViewingToday,
-    loadDay, nextDay, prevDay, goToday,
-    createEntry, updateEntry, deleteEntry,
+    selectedDate,
+    activityBlocks,
+    timeEntries,
+    windowSummary,
+    suggestedEntries,
+    loading,
+    loadError,
+    isViewingToday,
+    loadDay,
+    nextDay,
+    prevDay,
+    goToday,
+    createEntry,
+    updateEntry,
+    deleteEntry,
     summary,
   }
 })

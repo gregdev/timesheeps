@@ -1,45 +1,109 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+@font-face {
+  font-family: 'Nunito';
+  src: url('./assets/fonts/Nunito-VariableFont_wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('./assets/fonts/Nunito-Italic-VariableFont_wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
 :root {
-  --bg: #f8fafc;
+  --bg: #faf7f2;
   --surface: #ffffff;
-  --surface-2: #f1f5f9;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --text: #0f172a;
-  --text-muted: #64748b;
-  --text-faint: #94a3b8;
-  --primary: #6366f1;
-  --primary-hover: #4f46e5;
-  --danger: #ef4444;
-  --danger-hover: #dc2626;
+  --surface-2: #f2ece0;
+  --border: #dfd8cb;
+  --border-strong: #c4baaa;
+  --text: #2c1a0e;
+  --text-muted: #7a6a58;
+  --text-faint: #a8967e;
+  --primary: #7a9e80;
+  --primary-hover: #5e8064;
+  --danger: #e05c4b;
+  --danger-hover: #c44939;
   --grid-line: rgba(0, 0, 0, 0.05);
   --radius: 6px;
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.12);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
   --nav-height: 48px;
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  color-scheme: light;
+  accent-color: #7a9e80;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f172a;
-    --surface: #1e293b;
-    --surface-2: #0f172a;
-    --border: #334155;
-    --border-strong: #475569;
-    --text: #f1f5f9;
-    --text-muted: #94a3b8;
-    --text-faint: #64748b;
+    --bg: #1c1108;
+    --surface: #2a1e12;
+    --surface-2: #1c1108;
+    --border: #3c2a1a;
+    --border-strong: #5a3f2a;
+    --text: #f2ede3;
+    --text-muted: #a89070;
+    --text-faint: #6e5845;
     --grid-line: rgba(255, 255, 255, 0.05);
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
   }
 }
 
-html, body, #app {
+html,
+body,
+#app {
   height: 100%;
   overflow: hidden;
+}
+
+/* Scrollbars — light mode */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Scrollbars — dark mode */
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb {
+    background: #5a3f2a;
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #7a5a3a;
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
 }
 
 body {
@@ -58,38 +122,55 @@ button {
   border-radius: var(--radius);
   padding: 6px 14px;
   font-weight: 500;
-  transition: background 0.15s, opacity 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
   user-select: none;
 }
-button:disabled { opacity: 0.5; cursor: default; }
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 .btn-primary {
   background: var(--primary);
   color: #fff;
 }
-.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
 
 .btn-secondary {
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border);
 }
-.btn-secondary:hover { border-color: var(--border-strong); }
+.btn-secondary:hover {
+  border-color: var(--border-strong);
+}
 
 .btn-danger {
   background: var(--danger);
   color: #fff;
 }
-.btn-danger:hover { background: var(--danger-hover); }
+.btn-danger:hover {
+  background: var(--danger-hover);
+}
 
 .btn-ghost {
   background: transparent;
   color: var(--text-muted);
   padding: 4px 8px;
 }
-.btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+.btn-ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
 
-input, select, textarea {
+input,
+select,
+textarea {
   font-family: var(--font);
   font-size: 13px;
   color: var(--text);
@@ -98,14 +179,21 @@ input, select, textarea {
   border-radius: var(--radius);
   padding: 6px 10px;
   outline: none;
-  transition: border-color 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
   width: 100%;
 }
-input:focus, select:focus, textarea:focus {
+input:focus,
+select:focus,
+textarea:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+  box-shadow: 0 0 0 3px rgba(122, 158, 128, 0.2);
 }
-textarea { resize: vertical; min-height: 60px; }
+textarea {
+  resize: vertical;
+  min-height: 60px;
+}
 
 label {
   display: block;
@@ -115,6 +203,75 @@ label {
   margin-bottom: 4px;
 }
 
-.form-group { margin-bottom: 12px; }
+.form-group {
+  margin-bottom: 12px;
+}
 
-select option { background: var(--surface); }
+select option {
+  background: var(--surface);
+}
+
+/* ── VueDatePicker theme overrides ────────────────────────────────────── */
+.dp__theme_light {
+  --dp-background-color: var(--surface);
+  --dp-text-color: var(--text);
+  --dp-hover-color: var(--surface-2);
+  --dp-hover-text-color: var(--text);
+  --dp-hover-icon-color: var(--text-muted);
+  --dp-primary-color: #7a9e80;
+  --dp-primary-disabled-color: #afc9b4;
+  --dp-primary-text-color: #fff;
+  --dp-secondary-color: var(--border);
+  --dp-border-color: var(--border);
+  --dp-menu-border-color: var(--border);
+  --dp-border-color-hover: var(--border-strong);
+  --dp-border-color-focus: #7a9e80;
+  --dp-disabled-color: var(--surface-2);
+  --dp-disabled-color-text: var(--text-faint);
+  --dp-scroll-bar-background: var(--surface-2);
+  --dp-scroll-bar-color: var(--border-strong);
+  --dp-success-color: #7a9e80;
+  --dp-icon-color: var(--text-muted);
+  --dp-danger-color: #e05c4b;
+  --dp-marker-color: #e05c4b;
+  --dp-tooltip-color: var(--surface);
+  --dp-highlight-color: rgba(122, 158, 128, 0.12);
+  --dp-font-family: var(--font);
+  --dp-font-size: 13px;
+  --dp-border-radius: var(--radius);
+  --dp-loader: 5px solid #7a9e80;
+}
+
+.dp__theme_dark {
+  --dp-background-color: var(--surface);
+  --dp-text-color: var(--text);
+  --dp-hover-color: var(--surface-2);
+  --dp-hover-text-color: var(--text);
+  --dp-hover-icon-color: var(--text-muted);
+  --dp-primary-color: #7a9e80;
+  --dp-primary-disabled-color: #4e6e54;
+  --dp-primary-text-color: #fff;
+  --dp-secondary-color: var(--border);
+  --dp-border-color: var(--border);
+  --dp-menu-border-color: var(--border);
+  --dp-border-color-hover: var(--border-strong);
+  --dp-border-color-focus: #7a9e80;
+  --dp-disabled-color: var(--surface-2);
+  --dp-disabled-color-text: var(--text-faint);
+  --dp-scroll-bar-background: var(--surface-2);
+  --dp-scroll-bar-color: var(--border-strong);
+  --dp-success-color: #7a9e80;
+  --dp-icon-color: var(--text-muted);
+  --dp-danger-color: #e05c4b;
+  --dp-marker-color: #e05c4b;
+  --dp-tooltip-color: var(--surface);
+  --dp-highlight-color: rgba(122, 158, 128, 0.12);
+  --dp-font-family: var(--font);
+  --dp-font-size: 13px;
+  --dp-border-radius: var(--radius);
+  --dp-loader: 5px solid #7a9e80;
+}
+
+.dp--tp-wrap {
+  display: none !important;
+}

@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::db;
 use crate::models::Settings;
@@ -20,10 +20,12 @@ pub struct IdleReturnEvent {
 
 /// State shared between the polling loop and IPC commands.
 pub struct PollerState {
-    /// The window/app that is currently active (in progress, not yet written to DB).
+    /// The window/app that is currently active.
     current_app: String,
     current_title: String,
-    session_started: chrono::DateTime<chrono::Utc>,
+    current_window_id: u64,
+    /// Row id of the open activity_raw row being extended on each poll.
+    current_row_id: Option<i64>,
     is_idle: bool,
     idle_started: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -33,14 +35,15 @@ impl PollerState {
         PollerState {
             current_app: String::new(),
             current_title: String::new(),
-            session_started: chrono::Utc::now(),
+            current_window_id: 0,
+            current_row_id: None,
             is_idle: false,
             idle_started: None,
         }
     }
 }
 
-const POLL_INTERVAL_SECS: u64 = 5;
+const POLL_INTERVAL_SECS: u64 = 20;
 
 pub async fn start_polling(app: AppHandle) {
     let state = Arc::new(Mutex::new(PollerState::new()));
@@ -66,15 +69,15 @@ fn poll_once(app: &AppHandle, state: &Arc<Mutex<PollerState>>) {
     }
 }
 
-fn handle_active(app: &AppHandle, state: &Arc<Mutex<PollerState>>, settings: &Settings) {
-    let Some((new_app, new_title)) = get_foreground_window_info() else {
+fn handle_active(app: &AppHandle, state: &Arc<Mutex<PollerState>>, _settings: &Settings) {
+    let Some((new_app, new_title, new_window_id)) = get_foreground_window_info() else {
         return;
     };
 
     let mut s = state.lock().unwrap();
     let now = chrono::Utc::now();
 
-    // If we were idle, fire idle-return event
+    // Return from idle: emit event then fall through to start a new session.
     if s.is_idle {
         if let Some(idle_start) = s.idle_started {
             let idle_secs = (now - idle_start).num_seconds() as u64;
@@ -89,25 +92,25 @@ fn handle_active(app: &AppHandle, state: &Arc<Mutex<PollerState>>, settings: &Se
         }
         s.is_idle = false;
         s.idle_started = None;
-        // Start fresh session with current window
-        s.current_app = new_app;
-        s.current_title = new_title;
-        s.session_started = now;
-        return;
+        s.current_row_id = None;
+        // fall through to start a new session below
     }
 
-    // Window changed: flush old session to DB, start new one
-    if new_app != s.current_app || new_title != s.current_title {
-        let duration = (now - s.session_started).num_seconds();
-        // Only persist if longer than poll interval (avoids tiny blips)
-        if duration >= POLL_INTERVAL_SECS as i64 && !s.current_app.is_empty() {
-            flush_session(app, &s.current_app, &s.current_title, &s.session_started, &now);
+    let window_changed = new_window_id != s.current_window_id || new_app != s.current_app;
+
+    if window_changed || s.current_row_id.is_none() {
+        // New window (or first poll): open a fresh row.
+        s.current_app = new_app.clone();
+        s.current_title = new_title.clone();
+        s.current_window_id = new_window_id;
+        s.current_row_id = start_session(app, &new_app, &new_title, new_window_id, &now);
+    } else {
+        // Same window — just extend the existing row's ended_at.
+        if new_title != s.current_title {
+            s.current_title = new_title;
         }
-        s.current_app = new_app;
-        s.current_title = new_title;
-        s.session_started = now;
+        extend_session(app, s.current_row_id, &now);
     }
-    // else: same window, session continues — nothing to do until it changes
 }
 
 fn handle_idle(
@@ -118,41 +121,63 @@ fn handle_idle(
 ) {
     let mut s = state.lock().unwrap();
     if s.is_idle {
-        return; // already in idle state
+        return;
     }
     let now = chrono::Utc::now();
     let idle_started = now - chrono::Duration::seconds(idle_secs as i64);
 
-    // Flush the active session up to where idle started
-    if !s.current_app.is_empty() {
-        let active_duration = (idle_started - s.session_started).num_seconds();
-        if active_duration >= POLL_INTERVAL_SECS as i64 {
-            flush_session(app, &s.current_app, &s.current_title, &s.session_started, &idle_started);
-        }
+    // Stamp the open row's ended_at precisely at when idle began.
+    if let Some(id) = s.current_row_id {
+        let db_state = app.state::<crate::AppState>();
+        let db_guard = db_state.db.lock().unwrap();
+        let _ = db::update_activity_end(&db_guard, id, &idle_started);
     }
 
     s.is_idle = true;
     s.idle_started = Some(idle_started);
     s.current_app = String::new();
     s.current_title = String::new();
+    s.current_window_id = 0;
+    s.current_row_id = None;
 }
 
-fn flush_session(
+fn start_session(
     app: &AppHandle,
     app_name: &str,
     window_title: &str,
-    started_at: &chrono::DateTime<chrono::Utc>,
-    ended_at: &chrono::DateTime<chrono::Utc>,
-) {
+    window_id: u64,
+    now: &chrono::DateTime<chrono::Utc>,
+) -> Option<i64> {
     let db_state = app.state::<crate::AppState>();
     let db_guard = db_state.db.lock().unwrap();
-    let _ = db::insert_activity(&db_guard, app_name, window_title, started_at, ended_at);
+    match db::insert_activity(&db_guard, app_name, window_title, window_id, now, now) {
+        Ok(id) => {
+            drop(db_guard);
+            let _ = app.emit("activity-updated", ());
+            Some(id)
+        }
+        Err(_) => None,
+    }
+}
+
+fn extend_session(
+    app: &AppHandle,
+    row_id: Option<i64>,
+    now: &chrono::DateTime<chrono::Utc>,
+) {
+    let Some(id) = row_id else { return; };
+    let db_state = app.state::<crate::AppState>();
+    let db_guard = db_state.db.lock().unwrap();
+    if db::update_activity_end(&db_guard, id, now).is_ok() {
+        drop(db_guard);
+        let _ = app.emit("activity-updated", ());
+    }
 }
 
 // ── Platform-specific: get foreground window ──────────────────────────────────
 
 #[cfg(target_os = "windows")]
-fn get_foreground_window_info() -> Option<(String, String)> {
+fn get_foreground_window_info() -> Option<(String, String, u64)> {
     use windows::Win32::{
         Foundation::CloseHandle,
         System::ProcessStatus::GetModuleFileNameExW,
@@ -178,12 +203,12 @@ fn get_foreground_window_info() -> Option<(String, String)> {
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
         if pid == 0 {
-            return Some((String::from("unknown"), title));
+            return Some((String::from("unknown"), title, hwnd.0 as usize as u64));
         }
 
         let process = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(h) => h,
-            Err(_) => return Some((String::from("unknown"), title)),
+            Err(_) => return Some((String::from("unknown"), title, hwnd.0 as usize as u64)),
         };
 
         let mut name_buf = [0u16; 512];
@@ -201,12 +226,12 @@ fn get_foreground_window_info() -> Option<(String, String)> {
             String::from("unknown")
         };
 
-        Some((app_name, title))
+        Some((app_name, title, hwnd.0 as usize as u64))
     }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn get_foreground_window_info() -> Option<(String, String)> {
+fn get_foreground_window_info() -> Option<(String, String, u64)> {
     // Stub: returns nothing on non-Windows platforms.
     // Real activity tracking only happens on Windows.
     None

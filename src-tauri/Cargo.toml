@@ -1,6 +1,6 @@
 [package]
 name = "timesheeps"
-version = "0.3.0"
+version = "0.3.1"
 description = "Activity tracker for filling out timesheets"
 authors = ["you"]
 edition = "2021"

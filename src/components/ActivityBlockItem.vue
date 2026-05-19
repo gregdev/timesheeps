@@ -72,6 +72,7 @@
     class="activity-block"
     :style="{ top: top + 'px', height: height + 'px', '--color': color }"
     :data-tooltip="tooltip"
+    :data-tooltip-color="color"
     @contextmenu="onContextMenu"
   >
     <span v-if="height > 18" class="app-name">{{ block.appName }}</span>

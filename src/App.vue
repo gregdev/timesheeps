@@ -31,8 +31,13 @@
     }
   }
 
+  function onVisibilityChange() {
+    if (document.visibilityState === 'visible') dayStore.refreshCurrentDate()
+  }
+
   onMounted(async () => {
     window.addEventListener('keydown', onKeyDown)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     await Promise.all([
       projectsStore
         .load()
@@ -49,6 +54,7 @@
 
   onUnmounted(() => {
     window.removeEventListener('keydown', onKeyDown)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
   })
 </script>
 

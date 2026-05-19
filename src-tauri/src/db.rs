@@ -148,7 +148,7 @@ pub fn get_raw_activity_for_date(conn: &Connection, date: &str) -> Result<Vec<Ra
     let mut stmt = conn.prepare(
         "SELECT id, started_at, ended_at, app_name, window_title, window_id
          FROM activity_raw
-         WHERE date(started_at) = ?1
+         WHERE date(started_at, 'localtime') = ?1
          ORDER BY started_at",
     )?;
     let rows = stmt.query_map(params![date], |row| {

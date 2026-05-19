@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { format, addDays, subDays, isToday, parseISO } from 'date-fns'
+import { format, addDays, subDays, parseISO } from 'date-fns'
 import { api } from '../api'
 import type { ActivityBlock, SuggestedEntry, TimeEntry, WindowSummaryItem } from '../schemas'
 
 export const useDayStore = defineStore('day', () => {
   const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
+  const currentDate = ref(format(new Date(), 'yyyy-MM-dd'))
   const activityBlocks = ref<ActivityBlock[]>([])
   const timeEntries = ref<TimeEntry[]>([])
   const windowSummary = ref<WindowSummaryItem[]>([])
@@ -13,7 +14,7 @@ export const useDayStore = defineStore('day', () => {
   const loading = ref(false)
   const loadError = ref<string | null>(null)
 
-  const isViewingToday = computed(() => isToday(parseISO(selectedDate.value)))
+  const isViewingToday = computed(() => selectedDate.value === currentDate.value)
 
   async function loadDay(date?: string, silent = false) {
     if (date) selectedDate.value = date
@@ -47,6 +48,15 @@ export const useDayStore = defineStore('day', () => {
   }
   function goToday() {
     loadDay(format(new Date(), 'yyyy-MM-dd'))
+  }
+
+  function refreshCurrentDate() {
+    const today = format(new Date(), 'yyyy-MM-dd')
+    if (currentDate.value !== today) {
+      const wasViewingToday = selectedDate.value === currentDate.value
+      currentDate.value = today
+      if (wasViewingToday) loadDay(today)
+    }
   }
 
   async function createEntry(
@@ -136,6 +146,7 @@ export const useDayStore = defineStore('day', () => {
     nextDay,
     prevDay,
     goToday,
+    refreshCurrentDate,
     createEntry,
     updateEntry,
     deleteEntry,

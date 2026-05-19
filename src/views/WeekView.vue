@@ -33,12 +33,15 @@
   const weekLabel = computed(() => {
     const start = weekDays.value[0]
     const end = weekDays.value[6]
+
     if (start.getFullYear() === end.getFullYear()) {
       if (start.getMonth() === end.getMonth()) {
         return `${format(start, 'MMM d')} – ${format(end, 'd, yyyy')}`
       }
+
       return `${format(start, 'MMM d')} – ${format(end, 'MMM d, yyyy')}`
     }
+
     return `${format(start, 'MMM d, yyyy')} – ${format(end, 'MMM d, yyyy')}`
   })
 
@@ -50,6 +53,7 @@
   async function loadWeek() {
     loading.value = true
     const dates = weekDayStrings.value
+
     try {
       const results = await Promise.all(
         dates.map((date) =>
@@ -57,10 +61,12 @@
         ),
       )
       const map = new Map<string, DayData>()
+
       for (let i = 0; i < dates.length; i++) {
         const [entries, summary] = results[i]
         map.set(dates[i], { date: dates[i], entries, hasActivity: summary.length > 0 })
       }
+
       dayData.value = map
     } catch (err) {
       console.error('[timesheeps] loadWeek failed:', err)
@@ -74,9 +80,11 @@
   function prevWeek() {
     weekStart.value = subWeeks(weekStart.value, 1)
   }
+
   function nextWeek() {
     weekStart.value = addWeeks(weekStart.value, 1)
   }
+
   function thisWeek() {
     weekStart.value = startOfWeek(new Date(), { weekStartsOn: weekStartsOn.value })
   }
@@ -88,17 +96,23 @@
 
   const weekProjects = computed(() => {
     const usedIds = new Set<number>()
+
     for (const data of dayData.value.values()) {
       for (const entry of data.entries) {
         usedIds.add(entry.projectId)
       }
     }
+
     return projectsStore.projects.filter((p) => !p.archivedAt && usedIds.has(p.id))
   })
 
   function projectDayMinutes(projectId: number, date: string): number {
     const data = dayData.value.get(date)
-    if (!data) return 0
+
+    if (!data) {
+      return 0
+    }
+
     return data.entries
       .filter((e) => e.projectId === projectId)
       .reduce((sum, e) => sum + (e.endMinutes - e.startMinutes), 0)
@@ -106,18 +120,29 @@
 
   function dayTotalMinutes(date: string): number {
     const data = dayData.value.get(date)
-    if (!data) return 0
+
+    if (!data) {
+      return 0
+    }
+
     return data.entries.reduce((sum, e) => sum + (e.endMinutes - e.startMinutes), 0)
   }
 
   function hasUnlogged(date: string): boolean {
     const data = dayData.value.get(date)
-    if (!data) return false
+
+    if (!data) {
+      return false
+    }
+
     return data.hasActivity && dayTotalMinutes(date) === 0
   }
 
   function fmtMin(min: number): string {
-    if (min === 0) return ''
+    if (min === 0) {
+      return ''
+    }
+
     return formatDuration(min)
   }
 </script>

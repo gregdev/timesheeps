@@ -32,6 +32,7 @@
         const note = entry.note ? `  ${entry.note}` : ''
         lines.push(`${name}  ${start} – ${end}  ${dur}${note}`)
       }
+
       const total = entries.reduce((sum, e) => sum + (e.endMinutes - e.startMinutes), 0)
       lines.push('')
       lines.push(`Total: ${formatDuration(total)}`)
@@ -50,18 +51,26 @@
 
   onMounted(async () => {
     refreshTimer = setInterval(() => {
-      if (dayStore.isViewingToday) dayStore.loadDay(undefined, true)
+      if (dayStore.isViewingToday) {
+        dayStore.loadDay(undefined, true)
+      }
     }, 30_000)
 
     // Also refresh immediately whenever the Rust poller writes new activity
     unlistenActivityUpdated = await listen('activity-updated', () => {
-      if (dayStore.isViewingToday) dayStore.loadDay(undefined, true)
+      if (dayStore.isViewingToday) {
+        dayStore.loadDay(undefined, true)
+      }
     })
   })
 
   onUnmounted(() => {
-    if (refreshTimer) clearInterval(refreshTimer)
-    if (unlistenActivityUpdated) unlistenActivityUpdated()
+    if (refreshTimer) {
+      clearInterval(refreshTimer)
+    }
+    if (unlistenActivityUpdated) {
+      unlistenActivityUpdated()
+    }
   })
 </script>
 

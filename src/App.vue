@@ -72,6 +72,10 @@
       <RouterLink to="/settings" class="nav-link" :class="{ active: route.path === '/settings' }">
         Settings
       </RouterLink>
+
+      <RouterLink to="/about" class="nav-link" :class="{ active: route.path === '/about' }">
+        About
+      </RouterLink>
     </nav>
 
     <main class="app-main">

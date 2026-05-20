@@ -127,8 +127,10 @@
       e.preventDefault()
 
       if (highlightedIndex.value >= 0 && highlightedIndex.value < filtered.value.length) {
+        e.stopPropagation()
         selectProject(filtered.value[highlightedIndex.value].project)
       } else if (showCreate.value) {
+        e.stopPropagation()
         createAndSelect()
       }
     } else if (e.key === 'Escape') {
@@ -161,6 +163,13 @@
   function onDocKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       emit('cancel')
+    } else if (e.key === 'Enter') {
+      const isCtrlEnter = e.ctrlKey
+      const targetIsTextarea = e.target instanceof HTMLTextAreaElement
+      if ((isCtrlEnter || !targetIsTextarea) && canSave.value) {
+        e.preventDefault()
+        save()
+      }
     }
   }
 

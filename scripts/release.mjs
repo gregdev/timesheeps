@@ -7,10 +7,14 @@ import { dirname, resolve } from 'path'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-// tauri.conf.json is the version source of truth (used by tauri-apps/tauri-action)
-const tauriConfPath = resolve(root, 'src-tauri/tauri.conf.json')
-const tauriConf = JSON.parse(readFileSync(tauriConfPath, 'utf8'))
-const current = tauriConf.version
+// Cargo.toml is the version source of truth (tauri.conf.json inherits it automatically)
+const cargoPath = resolve(root, 'src-tauri/Cargo.toml')
+const cargo = readFileSync(cargoPath, 'utf8')
+const current = cargo.match(/\[package\][^[]*?version\s*=\s*"([^"]*)"/s)?.[1]
+if (!current) {
+  console.error('Could not read version from Cargo.toml. Aborting.')
+  process.exit(1)
+}
 
 const [major, minor, patch] = current.split('.').map(Number)
 
@@ -55,15 +59,8 @@ rl.question('Bump type (1/2/3 or patch/minor/major): ', (answer) => {
   pkg.version = next
   writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
 
-  // ── src-tauri/tauri.conf.json ─────────────────────────────────────────────
-  tauriConf.version = next
-  writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + '\n')
-
   // ── src-tauri/Cargo.toml ──────────────────────────────────────────────────
-  // Replace `version = "..."` only inside the [package] section
-  const cargoPath = resolve(root, 'src-tauri/Cargo.toml')
-  const cargo = readFileSync(cargoPath, 'utf8')
-  const updatedCargo = cargo.replace(/(\[package\][^\[]*?version\s*=\s*)"[^"]*"/s, `$1"${next}"`)
+  const updatedCargo = cargo.replace(/(\[package\][^[]*?version\s*=\s*)"[^"]*"/s, `$1"${next}"`)
 
   if (updatedCargo === cargo) {
     console.error('Could not locate version field in Cargo.toml. Aborting.')
@@ -74,7 +71,7 @@ rl.question('Bump type (1/2/3 or patch/minor/major): ', (answer) => {
 
   // ── git: commit → tag → push ──────────────────────────────────────────────
   try {
-    execSync('git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml', {
+    execSync('git add package.json src-tauri/Cargo.toml', {
       cwd: root,
       stdio: 'inherit',
     })

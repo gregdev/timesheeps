@@ -226,6 +226,9 @@
             </span>
             <span v-if="claudeStatus === 'error'" class="error-msg">{{ claudeError }}</span>
           </div>
+          <p class="field-hint" style="margin-top: 0.5rem;">
+            Also enable developer mode in Claude: <strong>Help → Troubleshoot → Enable Developer Mode</strong>
+          </p>
         </section>
       </div>
 

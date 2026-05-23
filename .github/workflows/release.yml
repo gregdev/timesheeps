@@ -24,6 +24,9 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Remove Git tar (Windows zstd fix)
+        run: Remove-Item 'C:\Program Files\Git\usr\bin\tar.exe'
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:

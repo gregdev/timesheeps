@@ -9,6 +9,8 @@
   import EntryTrack from './EntryTrack.vue'
   import ProjectPickerModal from './ProjectPickerModal.vue'
 
+  defineOptions({ inheritAttrs: false })
+
   const dayStore = useDayStore()
   const { totalHeight, hours, minuteToY } = useTimeline()
   const { pendingCreate, editingEntry } = useEntryModal()
@@ -71,7 +73,7 @@
 </script>
 
 <template>
-  <div class="timeline-canvas">
+  <div class="timeline-canvas" v-bind="$attrs">
     <!-- Column headers -->
     <div class="col-headers">
       <div class="ruler-spacer" />
@@ -97,11 +99,14 @@
 
         <!-- Activity track (left, read-only) -->
         <div class="activity-track" :style="{ height: totalHeight + 'px' }">
-          <ActivityBlockItem
-            v-for="(block, i) in dayStore.activityBlocks"
-            :key="i"
-            :block="block"
-          />
+          <TransitionGroup name="activity">
+            <ActivityBlockItem
+              v-for="(block, i) in dayStore.activityBlocks"
+              :key="block.startedAt"
+              :style="{ '--i': i }"
+              :block="block"
+            />
+          </TransitionGroup>
           <div v-if="!dayStore.loading && dayStore.activityBlocks.length === 0" class="empty-track">
             No activity recorded
           </div>
@@ -200,6 +205,7 @@
   .activity-track {
     position: relative;
     flex: 1;
+    overflow: hidden;
     border-left: 1px solid var(--border);
     min-width: 0;
   }

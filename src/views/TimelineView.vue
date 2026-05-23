@@ -90,11 +90,10 @@
     </div>
 
     <div class="main-area">
-      <div v-if="dayStore.loading" class="loading">Loading…</div>
-      <div v-else-if="dayStore.loadError" class="load-error">
+      <TimelineCanvas class="timeline-col" />
+      <div v-if="dayStore.loadError" class="load-error">
         Error loading data: {{ dayStore.loadError }}
       </div>
-      <TimelineCanvas v-show="!dayStore.loading && !dayStore.loadError" class="timeline-col" />
       <WindowSummary />
       <ProjectSummary />
     </div>
@@ -134,6 +133,7 @@
     display: flex;
     flex: 1;
     overflow: hidden;
+    position: relative;
   }
 
   .timeline-col {
@@ -141,16 +141,9 @@
     min-width: 0;
   }
 
-  .loading {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-  }
-
   .load-error {
-    flex: 1;
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -158,5 +151,7 @@
     padding: 16px;
     text-align: center;
     white-space: pre-wrap;
+    background: var(--bg);
+    z-index: 20;
   }
 </style>

@@ -98,6 +98,24 @@
     filter: brightness(1.07);
   }
 
+  .activity-leave-active {
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+  }
+
+  .activity-leave-to {
+    opacity: 0;
+  }
+
+  .activity-enter-active {
+    transition: opacity 0.3s ease;
+    transition-delay: calc(0.2s + min(calc(var(--i, 0) * 20ms), 280ms));
+  }
+
+  .activity-enter-from {
+    opacity: 0;
+  }
+
   .app-name {
     display: block;
     font-size: 11px;

@@ -2,6 +2,7 @@
   import { onMounted, onUnmounted, ref } from 'vue'
   import { RouterView, RouterLink, useRoute } from 'vue-router'
   import { listen } from '@tauri-apps/api/event'
+  import { getCurrentWindow } from '@tauri-apps/api/window'
   import { useProjectsStore } from './stores/projects'
   import { useSettingsStore } from './stores/settings'
   import { useDayStore } from './stores/day'
@@ -31,13 +32,13 @@
     }
   }
 
-  function onVisibilityChange() {
-    if (document.visibilityState === 'visible') dayStore.refreshCurrentDate()
-  }
+  let unlistenFocus: (() => void) | null = null
 
   onMounted(async () => {
     window.addEventListener('keydown', onKeyDown)
-    document.addEventListener('visibilitychange', onVisibilityChange)
+    unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) dayStore.refreshCurrentDate()
+    })
     await Promise.all([
       projectsStore
         .load()
@@ -54,7 +55,7 @@
 
   onUnmounted(() => {
     window.removeEventListener('keydown', onKeyDown)
-    document.removeEventListener('visibilitychange', onVisibilityChange)
+    unlistenFocus?.()
   })
 </script>
 

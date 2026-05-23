@@ -70,6 +70,7 @@ export const api = {
 
   getSettings: () => callOne(SettingsSchema, 'get_settings'),
   saveSettings: (settings: Settings) => invoke<void>('save_settings', { settings }),
+  setupClaudeMcp: () => invoke<void>('setup_claude_mcp'),
 
   getFilterRules: () => callArray(FilterRuleSchema, 'get_filter_rules'),
   createFilterRule: (ruleType: FilterRuleType, value: string) =>

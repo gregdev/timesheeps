@@ -119,6 +119,7 @@ pub fn run() {
             commands::time_entries::delete_time_entry,
             commands::settings::get_settings,
             commands::settings::save_settings,
+            commands::settings::setup_claude_mcp,
             commands::filter_rules::get_filter_rules,
             commands::filter_rules::create_filter_rule,
             commands::filter_rules::delete_filter_rule,

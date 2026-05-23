@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Timesheeps",
-  "version": "0.4.0",
   "identifier": "app.timesheeps.Timesheeps",
   "build": {
     "beforeDevCommand": "pnpm dev",

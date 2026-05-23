@@ -5,6 +5,7 @@
   import ProjectList from '../components/ProjectList.vue'
   import FilterRuleList from '../components/FilterRuleList.vue'
   import type { Settings } from '../schemas'
+  import { api } from '../api'
 
   const settingsStore = useSettingsStore()
   const dayStore = useDayStore()
@@ -43,6 +44,22 @@
     setTimeout(() => {
       saved.value = false
     }, 2000)
+  }
+
+  type ClaudeStatus = 'idle' | 'loading' | 'success' | 'error'
+  const claudeStatus = ref<ClaudeStatus>('idle')
+  const claudeError = ref('')
+
+  async function setupClaude() {
+    claudeStatus.value = 'loading'
+    claudeError.value = ''
+    try {
+      await api.setupClaudeMcp()
+      claudeStatus.value = 'success'
+    } catch (e: unknown) {
+      claudeStatus.value = 'error'
+      claudeError.value = e instanceof Error ? e.message : String(e)
+    }
   }
 </script>
 
@@ -194,6 +211,22 @@
             <span v-if="saved" class="saved-msg">✓ Saved</span>
           </div>
         </section>
+
+        <section class="settings-section">
+          <h2>Claude AI</h2>
+          <p class="field-hint">
+            Ask Claude "what did I work on today?" and it will query your activity data directly.
+          </p>
+          <div class="claude-row">
+            <button class="btn-primary" :disabled="claudeStatus === 'loading'" @click="setupClaude">
+              {{ claudeStatus === 'loading' ? 'Configuring…' : 'Set up Claude MCP' }}
+            </button>
+            <span v-if="claudeStatus === 'success'" class="saved-msg">
+              ✓ Configured — restart Claude Desktop to apply
+            </span>
+            <span v-if="claudeStatus === 'error'" class="error-msg">{{ claudeError }}</span>
+          </div>
+        </section>
       </div>
 
       <section class="settings-section settings-section--card">
@@ -334,6 +367,19 @@
     display: flex;
     align-items: center;
     gap: 12px;
+  }
+
+  .claude-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .error-msg {
+    font-size: 12px;
+    color: var(--danger);
+    font-weight: 500;
   }
 
   .saved-msg {

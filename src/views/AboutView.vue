@@ -6,7 +6,7 @@
 
   const RELEASES_URL = 'https://github.com/gregdev/timesheeps/releases/latest'
 
-  const version = ref('0.3.4')
+  const version = ref('0.0.0')
   const updateStatus = ref<'idle' | 'checking' | 'available' | 'up-to-date' | 'error'>('idle')
   const updateVersion = ref('')
   const errorMsg = ref('')
@@ -39,7 +39,7 @@
       // The updater endpoint doesn't exist yet (no published release) or we're in dev mode
       errorMsg.value =
         msg.toLowerCase().includes('json') || msg.toLowerCase().includes('fetch')
-          ? 'No update information available.'
+          ? 'Could not reach the update server.'
           : msg
     }
   }
@@ -70,9 +70,7 @@
         </p>
         <p v-else-if="updateStatus === 'error'" class="status-msg status-err">
           {{ errorMsg || 'Could not check for updates.' }}
-          <a v-if="!errorMsg" href="#" @click.prevent="openUrl(RELEASES_URL)">
-            Check releases page.
-          </a>
+          <a href="#" @click.prevent="openUrl(RELEASES_URL)">Check releases page.</a>
         </p>
       </div>
     </div>

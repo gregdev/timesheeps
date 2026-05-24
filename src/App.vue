@@ -1,6 +1,6 @@
 <script setup lang="ts">
-  import { onMounted, onUnmounted, ref } from 'vue'
-  import { RouterView, RouterLink, useRoute } from 'vue-router'
+  import { onMounted, onUnmounted, ref, watch } from 'vue'
+  import { RouterView, RouterLink, useRoute, useRouter } from 'vue-router'
   import { listen } from '@tauri-apps/api/event'
   import { getCurrentWindow } from '@tauri-apps/api/window'
   import { useProjectsStore } from './stores/projects'
@@ -12,10 +12,28 @@
   import type { IdleReturnEvent } from './schemas'
 
   const route = useRoute()
+  const router = useRouter()
   const projectsStore = useProjectsStore()
   const settingsStore = useSettingsStore()
   const dayStore = useDayStore()
   const idleEvent = ref<IdleReturnEvent | null>(null)
+  const searchQuery = ref('')
+  const searchInput = ref<HTMLInputElement | null>(null)
+
+  // Keep search input in sync when navigating to /search
+  watch(
+    () => route.query.q,
+    (q) => {
+      searchQuery.value = (q as string) || ''
+    },
+    { immediate: true },
+  )
+
+  function doSearch() {
+    const q = searchQuery.value.trim()
+    if (!q) return
+    router.push({ path: '/search', query: { q } })
+  }
 
   function onKeyDown(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -29,6 +47,10 @@
       dayStore.nextDay()
     } else if (e.key === 't' || e.key === 'T') {
       dayStore.goToday()
+    } else if (e.key === '/') {
+      e.preventDefault()
+      searchInput.value?.focus()
+      searchInput.value?.select()
     }
   }
 
@@ -77,6 +99,18 @@
       <RouterLink to="/about" class="nav-link" :class="{ active: route.path === '/about' }">
         About
       </RouterLink>
+
+      <div class="nav-search">
+        <input
+          ref="searchInput"
+          v-model="searchQuery"
+          type="search"
+          class="search-input"
+          placeholder="Search… (/)"
+          @keydown.enter="doSearch"
+          @keydown.escape="(searchInput as HTMLInputElement)?.blur()"
+        />
+      </div>
     </nav>
 
     <main class="app-main">
@@ -135,5 +169,41 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  .nav-search {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+  }
+
+  .search-input {
+    width: 190px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    transition:
+      border-color 0.15s,
+      width 0.2s;
+  }
+
+  .search-input:focus {
+    border-color: var(--primary);
+    width: 260px;
+  }
+
+  .search-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  /* Chrome/Safari search cancel button */
+  .search-input::-webkit-search-cancel-button {
+    opacity: 0.4;
+    cursor: pointer;
   }
 </style>

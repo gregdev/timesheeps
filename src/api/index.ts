@@ -5,6 +5,7 @@ import {
   FilterRuleSchema,
   ProjectMatchRuleSchema,
   ProjectSchema,
+  SearchResultsSchema,
   SettingsSchema,
   SuggestedEntrySchema,
   TimeEntrySchema,
@@ -85,4 +86,6 @@ export const api = {
   deleteProjectMatchRule: (id: number) => invoke<void>('delete_project_match_rule', { id }),
   getSuggestedEntriesForDay: (date: string) =>
     callArray(SuggestedEntrySchema, 'get_suggested_entries_for_day', { date }),
+
+  search: (query: string) => callOne(SearchResultsSchema, 'search', { query }),
 }

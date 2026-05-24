@@ -211,3 +211,21 @@ pub struct SuggestedEntry {
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
 }
+
+// ── Search ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaySearchResult {
+    pub date: String,
+    pub all_blocks: Vec<ActivityBlock>,
+    pub matched_blocks: Vec<ActivityBlock>,
+    pub total_matched_secs: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResults {
+    pub days: Vec<DaySearchResult>,
+    pub note_matches: Vec<TimeEntry>,
+}

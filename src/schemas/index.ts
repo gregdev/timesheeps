@@ -80,3 +80,17 @@ export const WindowSummaryItemSchema = z.object({
   totalSecs: z.number(),
 })
 export type WindowSummaryItem = z.infer<typeof WindowSummaryItemSchema>
+
+export const DaySearchResultSchema = z.object({
+  date: z.string(),
+  allBlocks: z.array(ActivityBlockSchema),
+  matchedBlocks: z.array(ActivityBlockSchema),
+  totalMatchedSecs: z.number(),
+})
+export type DaySearchResult = z.infer<typeof DaySearchResultSchema>
+
+export const SearchResultsSchema = z.object({
+  days: z.array(DaySearchResultSchema),
+  noteMatches: z.array(TimeEntrySchema),
+})
+export type SearchResults = z.infer<typeof SearchResultsSchema>

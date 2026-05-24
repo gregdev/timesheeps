@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 use crate::models::{
-    ActivityBlock, FilterRule, FilterRuleType, Project, ProjectMatchRule, RawActivity, Settings,
-    SuggestedEntry, TimeEntry,
+    ActivityBlock, DaySearchResult, FilterRule, FilterRuleType, Project, ProjectMatchRule,
+    RawActivity, SearchResults, Settings, SuggestedEntry, TimeEntry,
 };
 
 #[allow(dead_code)]
@@ -669,4 +669,79 @@ pub fn compute_suggestions(
     }
 
     merged
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+
+pub fn search(
+    conn: &Connection,
+    query: &str,
+    settings: &Settings,
+    rules: &[FilterRule],
+) -> Result<SearchResults> {
+    if query.trim().is_empty() {
+        return Ok(SearchResults { days: vec![], note_matches: vec![] });
+    }
+
+    let q = format!("%{}%", query.to_lowercase());
+
+    // Distinct dates that have matching raw activity (most recent first, max 60)
+    let mut date_stmt = conn.prepare(
+        "SELECT DISTINCT date(started_at, 'localtime') as d
+         FROM activity_raw
+         WHERE LOWER(window_title) LIKE ?1 OR LOWER(app_name) LIKE ?1
+         ORDER BY d DESC
+         LIMIT 60",
+    )?;
+    let dates: Vec<String> = date_stmt
+        .query_map(params![q], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let q_lower = query.to_lowercase();
+    let mut days = Vec::new();
+    for date in &dates {
+        let all_blocks = get_activity_for_date(conn, date, settings, rules)?;
+        let matched_blocks: Vec<ActivityBlock> = all_blocks
+            .iter()
+            .filter(|b| {
+                b.window_title.to_lowercase().contains(&q_lower)
+                    || b.app_name.to_lowercase().contains(&q_lower)
+            })
+            .cloned()
+            .collect();
+        if matched_blocks.is_empty() {
+            continue;
+        }
+        let total_matched_secs = matched_blocks.iter().map(|b| b.duration_secs).sum();
+        days.push(DaySearchResult {
+            date: date.clone(),
+            all_blocks,
+            matched_blocks,
+            total_matched_secs,
+        });
+    }
+
+    // Search time entry notes
+    let mut note_stmt = conn.prepare(
+        "SELECT id, date, project_id, start_minutes, end_minutes, note
+         FROM time_entries
+         WHERE LOWER(note) LIKE ?1
+         ORDER BY date DESC, start_minutes",
+    )?;
+    let note_matches: Vec<TimeEntry> = note_stmt
+        .query_map(params![q], |row| {
+            Ok(TimeEntry {
+                id: row.get(0)?,
+                date: row.get(1)?,
+                project_id: row.get(2)?,
+                start_minutes: row.get(3)?,
+                end_minutes: row.get(4)?,
+                note: row.get(5)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(SearchResults { days, note_matches })
 }

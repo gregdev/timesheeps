@@ -4,6 +4,7 @@ import SettingsView from '../views/SettingsView.vue'
 import AboutView from '../views/AboutView.vue'
 
 const WeekView = () => import('../views/WeekView.vue')
+const SearchView = () => import('../views/SearchView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -12,5 +13,6 @@ export const router = createRouter({
     { path: '/week', component: WeekView },
     { path: '/settings', component: SettingsView },
     { path: '/about', component: AboutView },
+    { path: '/search', component: SearchView },
   ],
 })

@@ -109,6 +109,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::activity::get_activity_for_day,
             commands::activity::get_window_summary_for_day,
+            commands::activity::search,
             commands::projects::get_projects,
             commands::projects::create_project,
             commands::projects::update_project,

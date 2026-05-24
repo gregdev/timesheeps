@@ -1,7 +1,15 @@
 <script setup lang="ts">
   import { ref, computed, watch } from 'vue'
   import { useRouter } from 'vue-router'
-  import { format, addDays, addWeeks, subWeeks, startOfWeek, isToday } from 'date-fns'
+  import {
+    format,
+    addDays,
+    subDays,
+    differenceInDays,
+    startOfWeek,
+    isToday,
+    parseISO,
+  } from 'date-fns'
   import { api } from '../api'
   import { useSettingsStore } from '../stores/settings'
   import { useProjectsStore } from '../stores/projects'
@@ -25,36 +33,61 @@
   const loading = ref(false)
   const dayData = ref<Map<string, DayData>>(new Map())
 
-  const weekStartsOn = computed(() => settingsStore.settings.weekStartsOn as 0 | 1)
-  const weekStart = ref(startOfWeek(new Date(), { weekStartsOn: weekStartsOn.value }))
+  // ── Pay period computation ────────────────────────────────────────────────
 
-  const weekDays = computed(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart.value, i)))
-  const weekDayStrings = computed(() => weekDays.value.map((d) => format(d, 'yyyy-MM-dd')))
+  function currentPayPeriodStart(anchorStr: string, freq: 'weekly' | 'fortnightly'): Date {
+    const anchor = parseISO(anchorStr)
+    const today = new Date()
+    if (freq === 'weekly') {
+      const dow = anchor.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
+      return startOfWeek(today, { weekStartsOn: dow })
+    } else {
+      const diff = differenceInDays(today, anchor)
+      const periodsElapsed = diff >= 0 ? Math.floor(diff / 14) : Math.ceil(diff / 14)
+      return addDays(anchor, periodsElapsed * 14)
+    }
+  }
 
-  const weekLabel = computed(() => {
-    const start = weekDays.value[0]
-    const end = weekDays.value[6]
+  const freq = computed(
+    () => settingsStore.settings.payScheduleFrequency as 'weekly' | 'fortnightly',
+  )
+  const anchor = computed(() => settingsStore.settings.payScheduleAnchor)
+  const periodLength = computed(() => (freq.value === 'fortnightly' ? 14 : 7))
 
+  const periodStart = ref(currentPayPeriodStart(anchor.value, freq.value))
+
+  // Re-anchor when settings change
+  watch([freq, anchor], ([f, a]) => {
+    periodStart.value = currentPayPeriodStart(a, f as 'weekly' | 'fortnightly')
+  })
+
+  const periodDays = computed(() =>
+    Array.from({ length: periodLength.value }, (_, i) => addDays(periodStart.value, i)),
+  )
+  const periodDayStrings = computed(() => periodDays.value.map((d) => format(d, 'yyyy-MM-dd')))
+
+  const periodLabel = computed(() => {
+    const start = periodDays.value[0]
+    const end = periodDays.value[periodLength.value - 1]
     if (start.getFullYear() === end.getFullYear()) {
       if (start.getMonth() === end.getMonth()) {
         return `${format(start, 'MMM d')} – ${format(end, 'd, yyyy')}`
       }
-
       return `${format(start, 'MMM d')} – ${format(end, 'MMM d, yyyy')}`
     }
-
     return `${format(start, 'MMM d, yyyy')} – ${format(end, 'MMM d, yyyy')}`
   })
 
-  const isCurrentWeek = computed(() => {
+  const isCurrentPeriod = computed(() => {
     const todayStr = format(new Date(), 'yyyy-MM-dd')
-    return weekDayStrings.value.includes(todayStr)
+    return periodDayStrings.value.includes(todayStr)
   })
 
-  async function loadWeek() {
-    loading.value = true
-    const dates = weekDayStrings.value
+  // ── Data loading ──────────────────────────────────────────────────────────
 
+  async function loadPeriod() {
+    loading.value = true
+    const dates = periodDayStrings.value
     try {
       const results = await Promise.all(
         dates.map((date) =>
@@ -62,32 +95,32 @@
         ),
       )
       const map = new Map<string, DayData>()
-
       for (let i = 0; i < dates.length; i++) {
         const [entries, summary] = results[i]
         map.set(dates[i], { date: dates[i], entries, hasActivity: summary.length > 0 })
       }
-
       dayData.value = map
     } catch (err) {
-      console.error('[timesheeps] loadWeek failed:', err)
+      console.error('[timesheeps] loadPeriod failed:', err)
     } finally {
       loading.value = false
     }
   }
 
-  watch(weekDayStrings, loadWeek, { immediate: true })
+  watch(periodDayStrings, loadPeriod, { immediate: true })
 
-  function prevWeek() {
-    weekStart.value = subWeeks(weekStart.value, 1)
+  // ── Navigation ────────────────────────────────────────────────────────────
+
+  function prevPeriod() {
+    periodStart.value = subDays(periodStart.value, periodLength.value)
   }
 
-  function nextWeek() {
-    weekStart.value = addWeeks(weekStart.value, 1)
+  function nextPeriod() {
+    periodStart.value = addDays(periodStart.value, periodLength.value)
   }
 
-  function thisWeek() {
-    weekStart.value = startOfWeek(new Date(), { weekStartsOn: weekStartsOn.value })
+  function thisPeriod() {
+    periodStart.value = currentPayPeriodStart(anchor.value, freq.value)
   }
 
   async function navigateTo(date: string) {
@@ -95,25 +128,25 @@
     router.push('/')
   }
 
-  const weekProjects = computed(() => {
-    const usedIds = new Set<number>()
+  // ── Grid helpers ─────────────────────────────────────────────────────────
 
+  const gridStyle = computed(() => ({
+    gridTemplateColumns: `160px repeat(${periodLength.value}, minmax(50px, 1fr))`,
+  }))
+
+  const periodProjects = computed(() => {
+    const usedIds = new Set<number>()
     for (const data of dayData.value.values()) {
       for (const entry of data.entries) {
         usedIds.add(entry.projectId)
       }
     }
-
     return projectsStore.projects.filter((p) => !p.archivedAt && usedIds.has(p.id))
   })
 
   function projectDayMinutes(projectId: number, date: string): number {
     const data = dayData.value.get(date)
-
-    if (!data) {
-      return 0
-    }
-
+    if (!data) return 0
     return data.entries
       .filter((e) => e.projectId === projectId)
       .reduce((sum, e) => sum + (e.endMinutes - e.startMinutes), 0)
@@ -121,29 +154,18 @@
 
   function dayTotalMinutes(date: string): number {
     const data = dayData.value.get(date)
-
-    if (!data) {
-      return 0
-    }
-
+    if (!data) return 0
     return data.entries.reduce((sum, e) => sum + (e.endMinutes - e.startMinutes), 0)
   }
 
   function hasUnlogged(date: string): boolean {
     const data = dayData.value.get(date)
-
-    if (!data) {
-      return false
-    }
-
+    if (!data) return false
     return data.hasActivity && dayTotalMinutes(date) === 0
   }
 
   function fmtMin(min: number): string {
-    if (min === 0) {
-      return ''
-    }
-
+    if (min === 0) return ''
     return formatDuration(min)
   }
 
@@ -157,104 +179,116 @@
 </script>
 
 <template>
-  <div class="week-view">
-    <div class="week-nav">
-      <button class="btn-ghost nav-btn" @click="prevWeek">‹</button>
+  <div class="pay-period-view">
+    <div class="period-nav">
+      <button class="btn-ghost nav-btn" @click="prevPeriod">‹</button>
 
-      <span class="week-label" :class="{ 'current-week': isCurrentWeek }">{{ weekLabel }}</span>
+      <span class="period-label" :class="{ 'current-period': isCurrentPeriod }">
+        {{ periodLabel }}
+      </span>
 
-      <button class="btn-ghost nav-btn" @click="nextWeek">›</button>
+      <button class="btn-ghost nav-btn" @click="nextPeriod">›</button>
 
-      <button v-if="!isCurrentWeek" class="btn-secondary this-week-btn" @click="thisWeek">
-        This week
+      <button v-if="!isCurrentPeriod" class="btn-secondary this-period-btn" @click="thisPeriod">
+        This period
       </button>
+
+      <span class="period-type-badge">{{ freq === 'fortnightly' ? 'Fortnightly' : 'Weekly' }}</span>
     </div>
 
     <div v-if="loading" class="loading-msg">Loading…</div>
 
-    <div v-else class="week-grid">
-      <!-- Header row -->
-      <div class="grid-row header-row">
-        <div class="cell label-cell"></div>
+    <div v-else class="period-scroll">
+      <div class="period-grid">
+        <!-- Header row -->
+        <div class="grid-row header-row" :style="gridStyle">
+          <div class="cell label-cell"></div>
 
-        <div
-          v-for="(date, i) in weekDayStrings"
-          :key="date"
-          class="cell day-header"
-          :class="{ today: isToday(weekDays[i]) }"
-          @click="navigateTo(date)"
-        >
-          <span class="day-name">{{ format(weekDays[i], 'EEE') }}</span>
-          <span class="day-date">{{ format(weekDays[i], 'M/d') }}</span>
-          <span
-            v-if="hasUnlogged(date)"
-            class="unlogged-dot"
-            title="Activity recorded but no time logged"
+          <div
+            v-for="(date, i) in periodDayStrings"
+            :key="date"
+            class="cell day-header"
+            :class="{ today: isToday(periodDays[i]) }"
+            @click="navigateTo(date)"
           >
-            ●
-          </span>
-        </div>
-      </div>
-
-      <!-- Empty state -->
-      <div v-if="weekProjects.length === 0" class="grid-row empty-row">
-        <div class="cell empty-cell">No time logged this week</div>
-      </div>
-
-      <!-- Project rows -->
-      <div v-for="project in weekProjects" :key="project.id" class="grid-row project-row">
-        <div class="cell project-label">
-          <span class="dot" :style="{ background: project.color }" />
-          <span class="project-name">{{ project.name }}</span>
+            <span class="day-name">{{ format(periodDays[i], 'EEE') }}</span>
+            <span class="day-date">{{ format(periodDays[i], 'M/d') }}</span>
+            <span
+              v-if="hasUnlogged(date)"
+              class="unlogged-dot"
+              title="Activity recorded but no time logged"
+            >
+              ●
+            </span>
+          </div>
         </div>
 
+        <!-- Empty state -->
+        <div v-if="periodProjects.length === 0" class="grid-row empty-row" :style="gridStyle">
+          <div class="cell empty-cell">No time logged this period</div>
+        </div>
+
+        <!-- Project rows -->
         <div
-          v-for="date in weekDayStrings"
-          :key="date"
-          class="cell entry-cell"
-          :class="{ 'has-value': projectDayMinutes(project.id, date) > 0 }"
-          @click="navigateTo(date)"
+          v-for="project in periodProjects"
+          :key="project.id"
+          class="grid-row project-row"
+          :style="gridStyle"
         >
-          {{ fmtMin(projectDayMinutes(project.id, date)) }}
+          <div class="cell project-label">
+            <span class="dot" :style="{ background: project.color }" />
+            <span class="project-name">{{ project.name }}</span>
+          </div>
+
+          <div
+            v-for="date in periodDayStrings"
+            :key="date"
+            class="cell entry-cell"
+            :class="{ 'has-value': projectDayMinutes(project.id, date) > 0 }"
+            @click="navigateTo(date)"
+          >
+            {{ fmtMin(projectDayMinutes(project.id, date)) }}
+          </div>
+        </div>
+
+        <!-- Total row -->
+        <div class="grid-row total-row" :style="gridStyle">
+          <div class="cell total-label">Total</div>
+
+          <div
+            v-for="date in periodDayStrings"
+            :key="date"
+            class="cell total-cell"
+            :class="{ 'has-value': dayTotalMinutes(date) > 0 }"
+            @click="navigateTo(date)"
+          >
+            {{ fmtMin(dayTotalMinutes(date)) }}
+          </div>
         </div>
       </div>
 
-      <!-- Total row -->
-      <div class="grid-row total-row">
-        <div class="cell total-label">Total</div>
-
-        <div
-          v-for="date in weekDayStrings"
-          :key="date"
-          class="cell total-cell"
-          :class="{ 'has-value': dayTotalMinutes(date) > 0 }"
-          @click="navigateTo(date)"
-        >
-          {{ fmtMin(dayTotalMinutes(date)) }}
-        </div>
-      </div>
+      <PeriodSummary :entries="allEntries" />
     </div>
-
-    <PeriodSummary :entries="allEntries" />
   </div>
 </template>
 
 <style scoped>
-  .week-view {
+  .pay-period-view {
     display: flex;
     flex-direction: column;
     height: 100%;
     padding: 16px 20px;
     gap: 16px;
-    overflow: auto;
+    overflow: hidden;
   }
 
   /* ── Navigation ────────────────────────────────────────────────────────────── */
 
-  .week-nav {
+  .period-nav {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
   }
 
   .nav-btn {
@@ -263,21 +297,31 @@
     padding: 4px 10px;
   }
 
-  .week-label {
+  .period-label {
     font-size: 14px;
     font-weight: 600;
-    min-width: 190px;
+    min-width: 220px;
     text-align: center;
   }
 
-  .week-label.current-week {
+  .period-label.current-period {
     color: var(--primary);
   }
 
-  .this-week-btn {
+  .this-period-btn {
     margin-left: 4px;
     font-size: 12px;
     padding: 4px 10px;
+  }
+
+  .period-type-badge {
+    margin-left: 4px;
+    font-size: 11px;
+    color: var(--text-faint);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 2px 8px;
   }
 
   .loading-msg {
@@ -285,18 +329,28 @@
     font-size: 13px;
   }
 
+  /* ── Scroll container ──────────────────────────────────────────────────────── */
+
+  .period-scroll {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
   /* ── Grid ──────────────────────────────────────────────────────────────────── */
 
-  .week-grid {
+  .period-grid {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
     flex-shrink: 0;
+    min-width: max-content;
   }
 
   .grid-row {
     display: grid;
-    grid-template-columns: 180px repeat(7, 1fr);
   }
 
   .cell {

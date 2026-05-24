@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 
 // ── Raw activity (from DB) ───────────────────────────────────────────────────
@@ -164,6 +164,10 @@ pub struct Settings {
     pub title_split_apps: Vec<String>,
     /// Day of week weeks start on: 0 = Sunday, 1 = Monday.
     pub week_starts_on: i64,
+    /// Pay frequency: "weekly" or "fortnightly".
+    pub pay_schedule_frequency: String,
+    /// A known pay period start date (YYYY-MM-DD) used to anchor all pay period calculations.
+    pub pay_schedule_anchor: String,
 }
 
 impl Default for Settings {
@@ -179,6 +183,8 @@ impl Default for Settings {
             window_summary_min_secs: 60,
             title_split_apps: vec!["Brave".to_string(), "Chrome".to_string(), "Firefox".to_string(), "msedge".to_string(), "Opera".to_string(), "Vivaldi".to_string(), "Arc".to_string(), "Zen".to_string(), "Chromium".to_string()],
             week_starts_on: 1,
+            pay_schedule_frequency: "weekly".to_string(),
+            pay_schedule_anchor: Local::now().format("%Y-%m-%d").to_string(),
         }
     }
 }

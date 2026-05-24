@@ -103,7 +103,7 @@
   }
 
   .app-name {
-    font-size: 22px;
+    font-size: 28px;
     font-weight: 700;
     margin: 0;
     color: var(--text);
@@ -112,7 +112,7 @@
   .app-author {
     position: relative;
     top: -8px;
-    font-size: 14px;
+    font-size: 18px;
     color: var(--text-muted);
     margin: 0;
 
@@ -122,7 +122,7 @@
   }
 
   .app-version {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text);
     margin: 0;
   }
@@ -140,7 +140,7 @@
     border-radius: var(--radius);
     background: var(--primary);
     color: #fff;
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 500;
     border: none;
     cursor: pointer;

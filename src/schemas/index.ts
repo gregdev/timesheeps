@@ -64,6 +64,8 @@ export const SettingsSchema = z.object({
   windowSummaryMinSecs: z.number(),
   titleSplitApps: z.array(z.string()),
   weekStartsOn: z.number(),
+  payScheduleFrequency: z.enum(['weekly', 'fortnightly']),
+  payScheduleAnchor: z.string(),
 })
 export type Settings = z.infer<typeof SettingsSchema>
 

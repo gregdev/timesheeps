@@ -82,6 +82,8 @@ fn run_migrations(conn: &Connection) -> Result<()> {
     let _ = conn.execute("ALTER TABLE activity_raw ADD COLUMN window_id INTEGER NOT NULL DEFAULT 0", []);
     // Add parent_id to existing DBs (ignored if already present)
     let _ = conn.execute("ALTER TABLE projects ADD COLUMN parent_id INTEGER REFERENCES projects(id) ON DELETE SET NULL", []);
+    // Remove expression index if it was ever created (non-deterministic, SQLite 3.38+ rejects it)
+    let _ = conn.execute("DROP INDEX IF EXISTS idx_activity_raw_localdate", []);
     Ok(())
 }
 
@@ -98,6 +100,8 @@ fn seed_default_settings(conn: &Connection) -> Result<()> {
         ("window_summary_min_secs", defaults.window_summary_min_secs.to_string()),
         ("title_split_apps", "Brave,Chrome,Firefox,msedge,Opera,Vivaldi,Arc,Zen,Chromium".to_string()),
         ("week_starts_on", "1".to_string()),
+        ("pay_schedule_frequency", defaults.pay_schedule_frequency.clone()),
+        ("pay_schedule_anchor", defaults.pay_schedule_anchor.clone()),
     ];
     for (key, val) in pairs {
         conn.execute(
@@ -145,13 +149,38 @@ pub fn update_activity_end(
 }
 
 pub fn get_raw_activity_for_date(conn: &Connection, date: &str) -> Result<Vec<RawActivity>> {
+    // Compute UTC range for the given local date so the started_at index is used.
+    let (start_utc, end_utc) = {
+        use chrono::{Days, Local, NaiveDate};
+        let naive = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .unwrap_or_else(|_| Local::now().date_naive());
+        let s = naive
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .earliest()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now)
+            .to_rfc3339();
+        let e = naive
+            .checked_add_days(Days::new(1))
+            .unwrap_or(naive)
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .earliest()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now)
+            .to_rfc3339();
+        (s, e)
+    };
     let mut stmt = conn.prepare(
         "SELECT id, started_at, ended_at, app_name, window_title, window_id
          FROM activity_raw
-         WHERE date(started_at, 'localtime') = ?1
+         WHERE started_at >= ?1 AND started_at < ?2
          ORDER BY started_at",
     )?;
-    let rows = stmt.query_map(params![date], |row| {
+    let rows = stmt.query_map(params![start_utc, end_utc], |row| {
         let started_str: String = row.get(1)?;
         let ended_str: String = row.get(2)?;
         let window_id_i64: i64 = row.get(5).unwrap_or(0);
@@ -529,6 +558,15 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         .map(|s| s == "1")
         .unwrap_or(default)
     };
+    let get_str = |key: &str, default: &str| -> String {
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .unwrap_or_else(|| default.to_string())
+    };
     let d = Settings::default();
     let title_split_apps: Vec<String> = conn
         .query_row(
@@ -550,6 +588,8 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         window_summary_min_secs: get("window_summary_min_secs", d.window_summary_min_secs),
         title_split_apps,
         week_starts_on: get("week_starts_on", d.week_starts_on),
+        pay_schedule_frequency: get_str("pay_schedule_frequency", &d.pay_schedule_frequency),
+        pay_schedule_anchor: get_str("pay_schedule_anchor", &d.pay_schedule_anchor),
     })
 }
 
@@ -565,6 +605,8 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
         ("window_summary_min_secs", s.window_summary_min_secs.to_string()),
         ("title_split_apps", s.title_split_apps.join(",")),
         ("week_starts_on", s.week_starts_on.to_string()),
+        ("pay_schedule_frequency", s.pay_schedule_frequency.clone()),
+        ("pay_schedule_anchor", s.pay_schedule_anchor.clone()),
     ];
     for (key, val) in pairs {
         conn.execute(

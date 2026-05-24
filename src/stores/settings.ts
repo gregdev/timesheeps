@@ -25,6 +25,8 @@ export const useSettingsStore = defineStore('settings', () => {
       'Chromium',
     ],
     weekStartsOn: 1,
+    payScheduleFrequency: 'weekly',
+    payScheduleAnchor: new Date().toISOString().slice(0, 10),
   })
   const filterRules = ref<FilterRule[]>([])
   const projectMatchRules = ref<ProjectMatchRule[]>([])

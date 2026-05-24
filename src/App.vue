@@ -35,6 +35,12 @@
     router.push({ path: '/search', query: { q } })
   }
 
+  function cancelSearch() {
+    searchQuery.value = ''
+    searchInput.value?.blur()
+    if (route.path === '/search') router.back()
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey) return
     const tag = (e.target as HTMLElement).tagName
@@ -92,6 +98,14 @@
         Week
       </RouterLink>
 
+      <RouterLink
+        to="/pay-period"
+        class="nav-link"
+        :class="{ active: route.path === '/pay-period' }"
+      >
+        Pay Period
+      </RouterLink>
+
       <RouterLink to="/settings" class="nav-link" :class="{ active: route.path === '/settings' }">
         Settings
       </RouterLink>
@@ -108,7 +122,7 @@
           class="search-input"
           placeholder="Search… (/)"
           @keydown.enter="doSearch"
-          @keydown.escape="(searchInput as HTMLInputElement)?.blur()"
+          @keydown.escape="cancelSearch"
         />
       </div>
     </nav>

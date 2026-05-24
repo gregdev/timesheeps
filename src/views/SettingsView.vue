@@ -53,6 +53,7 @@
   async function setupClaude() {
     claudeStatus.value = 'loading'
     claudeError.value = ''
+
     try {
       await api.setupClaudeMcp()
       claudeStatus.value = 'success'
@@ -102,6 +103,26 @@
                 <option :value="1">Monday</option>
                 <option :value="0">Sunday</option>
               </select>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Pay Schedule</h2>
+          <div class="settings-grid">
+            <div class="form-group">
+              <label>Pay frequency</label>
+              <select v-model="form.payScheduleFrequency">
+                <option value="weekly">Weekly</option>
+                <option value="fortnightly">Fortnightly</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Pay period start date</label>
+              <input v-model="form.payScheduleAnchor" type="date" />
+              <p class="field-hint">
+                A known pay period start date — used to calculate all past and future periods.
+              </p>
             </div>
           </div>
         </section>
@@ -226,8 +247,9 @@
             </span>
             <span v-if="claudeStatus === 'error'" class="error-msg">{{ claudeError }}</span>
           </div>
-          <p class="field-hint" style="margin-top: 0.5rem;">
-            Also enable developer mode in Claude: <strong>Help → Troubleshoot → Enable Developer Mode</strong>
+          <p class="field-hint" style="margin-top: 0.5rem">
+            Also enable developer mode in Claude:
+            <strong>Help → Troubleshoot → Enable Developer Mode</strong>
           </p>
         </section>
       </div>
@@ -280,7 +302,7 @@
   }
 
   .settings-section h2 {
-    font-size: 15px;
+    font-size: 18px;
     font-weight: 600;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--border);
@@ -293,7 +315,7 @@
   }
 
   .field-hint {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-faint);
     margin-top: 4px;
   }

@@ -127,6 +127,21 @@ fn write_claude_config(dir: &std::path::Path, binary_path: &str) -> Result<(), S
 }
 
 #[tauri::command]
+pub fn check_claude_mcp() -> bool {
+    for dir in find_claude_config_dirs() {
+        let config_path = dir.join("claude_desktop_config.json");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+                if config["mcpServers"]["timesheeps"].is_object() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+#[tauri::command]
 pub fn setup_claude_mcp(app: AppHandle) -> Result<(), String> {
     let binary = find_mcp_binary(&app).ok_or_else(|| {
         "Cannot find timesheeps-mcp binary. Build the project first with `pnpm tauri dev` or `pnpm tauri build`.".to_string()

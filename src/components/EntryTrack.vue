@@ -28,7 +28,10 @@
   })
 
   function onTrackMousemove(e: MouseEvent) {
-    if (!trackRef.value) return
+    if (!trackRef.value) {
+      return
+    }
+
     const rect = trackRef.value.getBoundingClientRect()
     hoverY.value = e.clientY - rect.top
     isHovering.value = true
@@ -45,11 +48,17 @@
   const dragCurrentMin = ref(0)
 
   const previewTop = computed(() => {
-    if (!isDragging.value || !hasMoved.value) return 0
+    if (!isDragging.value || !hasMoved.value) {
+      return 0
+    }
+
     return minuteToY(Math.min(dragStartMin.value, dragCurrentMin.value))
   })
   const previewHeight = computed(() => {
-    if (!isDragging.value || !hasMoved.value) return 0
+    if (!isDragging.value || !hasMoved.value) {
+      return 0
+    }
+
     return Math.abs(minuteToY(dragCurrentMin.value) - minuteToY(dragStartMin.value))
   })
 
@@ -59,9 +68,15 @@
   const dragBottomY = computed(() => minuteToY(dragBottomMin.value))
 
   function onTrackMousedown(e: MouseEvent) {
-    if (e.button !== 0) return
-    if ((e.target as HTMLElement).closest('.time-block')) return
-    if (!trackRef.value) return
+    if (e.button !== 0) {
+      return
+    }
+    if ((e.target as HTMLElement).closest('.time-block')) {
+      return
+    }
+    if (!trackRef.value) {
+      return
+    }
 
     const rect = trackRef.value.getBoundingClientRect()
     const relY = e.clientY - rect.top
@@ -76,7 +91,10 @@
   }
 
   function onDocMousemove(e: MouseEvent) {
-    if (!isDragging.value || !trackRef.value) return
+    if (!isDragging.value || !trackRef.value) {
+      return
+    }
+
     hasMoved.value = true
     const rect = trackRef.value.getBoundingClientRect()
     const relY = e.clientY - rect.top
@@ -86,12 +104,17 @@
   function onDocMouseup() {
     document.removeEventListener('mousemove', onDocMousemove)
     document.removeEventListener('mouseup', onDocMouseup)
-    if (!isDragging.value) return
+
+    if (!isDragging.value) {
+      return
+    }
+
     isDragging.value = false
     hasMoved.value = false
 
     const start = Math.min(dragStartMin.value, dragCurrentMin.value)
     const end = Math.max(dragStartMin.value, dragCurrentMin.value)
+
     if (end - start >= 5) {
       emit('request-create', start, end)
     }

@@ -95,15 +95,23 @@
 
   const weekProjects = computed(() => {
     const usedIds = new Set<number>()
+
     for (const data of dayData.value.values()) {
-      for (const entry of data.entries) usedIds.add(entry.projectId)
+      for (const entry of data.entries) {
+        usedIds.add(entry.projectId)
+      }
     }
+
     return projectsStore.projects.filter((p) => !p.archivedAt && usedIds.has(p.id))
   })
 
   const allEntries = computed(() => {
     const entries: TimeEntry[] = []
-    for (const data of dayData.value.values()) entries.push(...data.entries)
+
+    for (const data of dayData.value.values()) {
+      entries.push(...data.entries)
+    }
+
     return entries
   })
 

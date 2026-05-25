@@ -44,27 +44,37 @@
     if (!q) {
       // Grouped order: roots then their children
       const result: { project: Project; depth: 0 | 1 }[] = []
+
       for (const root of projectsStore.roots) {
         result.push({ project: root, depth: 0 })
+
         for (const child of projectsStore.childrenOf(root.id)) {
           result.push({ project: child, depth: 1 })
         }
       }
+
       // Orphan children (parent archived) shown standalone
       const inResult = new Set(result.map((r) => r.project.id))
+
       for (const p of projectsStore.active) {
-        if (!inResult.has(p.id)) result.push({ project: p, depth: 0 })
+        if (!inResult.has(p.id)) {
+          result.push({ project: p, depth: 0 })
+        }
       }
+
       return result
     }
 
     // Search: match own name OR parent name
     return projectsStore.active
       .filter((p) => {
-        if (p.name.toLowerCase().includes(q)) return true
+        if (p.name.toLowerCase().includes(q)) {
+          return true
+        }
         if (p.parentId !== null) {
           return projectsStore.byId(p.parentId)?.name.toLowerCase().includes(q) ?? false
         }
+
         return false
       })
       .map((p) => ({ project: p, depth: 0 as const }))
@@ -166,6 +176,7 @@
     } else if (e.key === 'Enter') {
       const isCtrlEnter = e.ctrlKey
       const targetIsTextarea = e.target instanceof HTMLTextAreaElement
+
       if ((isCtrlEnter || !targetIsTextarea) && canSave.value) {
         e.preventDefault()
         save()

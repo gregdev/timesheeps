@@ -35,9 +35,11 @@
   // Hour tick positions for the hour grid
   const hourTicks = computed(() => {
     const ticks: number[] = []
+
     for (let h = props.startHour + 1; h < props.endHour; h++) {
       ticks.push(((h * 60 - startMin.value) / totalMin.value) * 100)
     }
+
     return ticks
   })
 </script>

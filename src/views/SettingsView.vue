@@ -57,7 +57,10 @@
   }
 
   function showSaved(field: string) {
-    if (fieldTimer) clearTimeout(fieldTimer)
+    if (fieldTimer) {
+      clearTimeout(fieldTimer)
+    }
+
     savedField.value = field
     fieldTimer = setTimeout(() => {
       savedField.value = null
@@ -67,8 +70,13 @@
   watch(
     form,
     async (s) => {
-      if (updatingFromStore) return
-      if (saveTimer) clearTimeout(saveTimer)
+      if (updatingFromStore) {
+        return
+      }
+      if (saveTimer) {
+        clearTimeout(saveTimer)
+      }
+
       saveTimer = setTimeout(async () => {
         await settingsStore.save({ ...s })
         await dayStore.loadDay()

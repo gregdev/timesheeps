@@ -11,6 +11,7 @@
   watch(visible, async (v: boolean) => {
     if (v) {
       await nextTick()
+
       if (menuRef.value) {
         const w = menuRef.value.offsetWidth
         const h = menuRef.value.offsetHeight
@@ -29,11 +30,15 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') close()
+    if (e.key === 'Escape') {
+      close()
+    }
   }
 
   function onMousedown(e: MouseEvent) {
-    if (menuRef.value && !menuRef.value.contains(e.target as Node)) close()
+    if (menuRef.value && !menuRef.value.contains(e.target as Node)) {
+      close()
+    }
   }
 
   watch(visible, (v: boolean) => {

@@ -11,6 +11,7 @@ export function useTimeline() {
   const totalHeight = computed(() => ((endMin.value - startMin.value) / 60) * HOUR_HEIGHT)
   const hours = computed(() => {
     const result: number[] = []
+
     for (
       let h = settingsStore.settings.timelineStartHour;
       h <= settingsStore.settings.timelineEndHour;
@@ -18,6 +19,7 @@ export function useTimeline() {
     ) {
       result.push(h)
     }
+
     return result
   })
 
@@ -40,8 +42,14 @@ export function useTimeline() {
   function formatDuration(totalMin: number): string {
     const h = Math.floor(totalMin / 60)
     const m = totalMin % 60
-    if (h === 0) return `${m}m`
-    if (m === 0) return `${h}h`
+
+    if (h === 0) {
+      return `${m}m`
+    }
+    if (m === 0) {
+      return `${h}h`
+    }
+
     return `${h}h ${m}m`
   }
 

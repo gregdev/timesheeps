@@ -14,7 +14,9 @@
   const displayDate = computed(() => format(parseISO(dayStore.selectedDate), 'EEEE, MMMM d, yyyy'))
 
   function onDateSelect(val: string | null) {
-    if (val) dayStore.loadDay(val)
+    if (val) {
+      dayStore.loadDay(val)
+    }
   }
 </script>
 

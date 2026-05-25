@@ -31,20 +31,33 @@
 
   function doSearch() {
     const q = searchQuery.value.trim()
-    if (!q) return
+
+    if (!q) {
+      return
+    }
+
     router.push({ path: '/search', query: { q } })
   }
 
   function cancelSearch() {
     searchQuery.value = ''
     searchInput.value?.blur()
-    if (route.path === '/search') router.back()
+
+    if (route.path === '/search') {
+      router.back()
+    }
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return
+    if (e.metaKey || e.ctrlKey || e.altKey) {
+      return
+    }
+
     const tag = (e.target as HTMLElement).tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+      return
+    }
     if (e.key === 'ArrowLeft') {
       e.preventDefault()
       dayStore.prevDay()
@@ -65,7 +78,9 @@
   onMounted(async () => {
     window.addEventListener('keydown', onKeyDown)
     unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) dayStore.refreshCurrentDate()
+      if (focused) {
+        dayStore.refreshCurrentDate()
+      }
     })
     await Promise.all([
       projectsStore

@@ -26,8 +26,10 @@
       results.value = null
       return
     }
+
     loading.value = true
     error.value = null
+
     try {
       results.value = await api.search(q.trim())
     } catch (err) {
@@ -41,12 +43,17 @@
 
   // Aggregate matched blocks across all days by (appName, windowTitle)
   const windowTotals = computed(() => {
-    if (!results.value) return []
+    if (!results.value) {
+      return []
+    }
+
     const map = new Map<string, { appName: string; windowTitle: string; totalSecs: number }>()
+
     for (const day of results.value.days) {
       for (const block of day.matchedBlocks) {
         const key = `${block.appName}\x00${block.windowTitle}`
         const existing = map.get(key)
+
         if (existing) {
           existing.totalSecs += block.durationSecs
         } else {
@@ -58,24 +65,37 @@
         }
       }
     }
+
     return [...map.values()].sort((a, b) => b.totalSecs - a.totalSecs)
   })
 
   const totalMatchedSecs = computed(() => {
-    if (!results.value) return 0
+    if (!results.value) {
+      return 0
+    }
+
     return results.value.days.reduce((s, d) => s + d.totalMatchedSecs, 0)
   })
 
   const totalResultCount = computed(() => {
-    if (!results.value) return 0
+    if (!results.value) {
+      return 0
+    }
+
     return results.value.days.reduce((s, d) => s + d.matchedBlocks.length, 0)
   })
 
   function formatDuration(secs: number): string {
     const h = Math.floor(secs / 3600)
     const m = Math.floor((secs % 3600) / 60)
-    if (h === 0) return `${m}m`
-    if (m === 0) return `${h}h`
+
+    if (h === 0) {
+      return `${m}m`
+    }
+    if (m === 0) {
+      return `${h}h`
+    }
+
     return `${h}h ${m}m`
   }
 
@@ -88,6 +108,7 @@
     const e = new Date(endIso)
     const fmt = (d: Date) =>
       `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+
     return `${fmt(s)} – ${fmt(e)}`
   }
 
@@ -99,9 +120,11 @@
 
   function cleanTitle(appName: string, title: string): string {
     const parts = title.split(' \u2014 ')
+
     if (parts.length > 1 && parts[parts.length - 1].toLowerCase() === appName.toLowerCase()) {
       parts.pop()
     }
+
     const cleaned = parts.join(' \u2014 ')
     return cleaned.toLowerCase() === appName.toLowerCase() ? '' : cleaned
   }

@@ -14,7 +14,11 @@ const palette = [
 export function useAppColour() {
   function appColour(name: string): string {
     let h = 0
-    for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0
+
+    for (const c of name) {
+      h = (h * 31 + c.charCodeAt(0)) >>> 0
+    }
+
     return palette[h % palette.length]
   }
 

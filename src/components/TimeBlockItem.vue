@@ -68,6 +68,7 @@
     document.removeEventListener('mouseup', onUp)
     const edge = dragEdge
     dragEdge = null
+
     if (
       localStart.value !== props.entry.startMinutes ||
       localEnd.value !== props.entry.endMinutes
@@ -88,7 +89,9 @@
   }
 
   function onClick() {
-    if (dragEdge === null) emit('edit', props.entry)
+    if (dragEdge === null) {
+      emit('edit', props.entry)
+    }
   }
 
   onUnmounted(() => {

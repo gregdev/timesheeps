@@ -17,8 +17,12 @@ export const useDayStore = defineStore('day', () => {
   const isViewingToday = computed(() => selectedDate.value === currentDate.value)
 
   async function loadDay(date?: string, silent = false) {
-    if (date) selectedDate.value = date
-    if (!silent) loading.value = true
+    if (date) {
+      selectedDate.value = date
+    }
+    if (!silent) {
+      loading.value = true
+    }
     try {
       const [blocks, entries, winSummary, suggestions] = await Promise.all([
         api.getActivityForDay(selectedDate.value),
@@ -43,19 +47,25 @@ export const useDayStore = defineStore('day', () => {
   function nextDay() {
     loadDay(format(addDays(parseISO(selectedDate.value), 1), 'yyyy-MM-dd'))
   }
+
   function prevDay() {
     loadDay(format(subDays(parseISO(selectedDate.value), 1), 'yyyy-MM-dd'))
   }
+
   function goToday() {
     loadDay(format(new Date(), 'yyyy-MM-dd'))
   }
 
   function refreshCurrentDate() {
     const today = format(new Date(), 'yyyy-MM-dd')
+
     if (currentDate.value !== today) {
       const wasViewingToday = selectedDate.value === currentDate.value
       currentDate.value = today
-      if (wasViewingToday) loadDay(today)
+
+      if (wasViewingToday) {
+        loadDay(today)
+      }
     }
   }
 
@@ -87,6 +97,7 @@ export const useDayStore = defineStore('day', () => {
   ) {
     await api.updateTimeEntry(id, projectId, startMinutes, endMinutes, note)
     const idx = timeEntries.value.findIndex((e) => e.id === id)
+
     if (idx >= 0) {
       timeEntries.value[idx] = {
         ...timeEntries.value[idx],
@@ -106,9 +117,11 @@ export const useDayStore = defineStore('day', () => {
 
   const summary = computed(() => {
     const map = new Map<number, number>()
+
     for (const e of timeEntries.value) {
       map.set(e.projectId, (map.get(e.projectId) ?? 0) + (e.endMinutes - e.startMinutes))
     }
+
     return map
   })
 

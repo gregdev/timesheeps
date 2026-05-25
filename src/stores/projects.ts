@@ -32,14 +32,19 @@ export const useProjectsStore = defineStore('projects', () => {
   async function update(id: number, name: string, color: string, parentId: number | null = null) {
     await api.updateProject(id, name, color, parentId)
     const idx = projects.value.findIndex((p) => p.id === id)
-    if (idx >= 0) projects.value[idx] = { ...projects.value[idx], name, color, parentId }
+
+    if (idx >= 0) {
+      projects.value[idx] = { ...projects.value[idx], name, color, parentId }
+    }
   }
 
   async function archive(id: number) {
     await api.archiveProject(id)
     const idx = projects.value.findIndex((p) => p.id === id)
-    if (idx >= 0)
+
+    if (idx >= 0) {
       projects.value[idx] = { ...projects.value[idx], archivedAt: new Date().toISOString() }
+    }
   }
 
   return { projects, active, roots, load, byId, childrenOf, create, update, archive }

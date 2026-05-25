@@ -25,7 +25,10 @@
   )
 
   async function addRule() {
-    if (!newRuleValue.value.trim() || !editing.value) return
+    if (!newRuleValue.value.trim() || !editing.value) {
+      return
+    }
+
     await settingsStore.createMatchRule(
       editing.value.id,
       newRuleType.value,

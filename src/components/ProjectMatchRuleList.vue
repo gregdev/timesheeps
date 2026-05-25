@@ -14,18 +14,25 @@
   const activeProjects = computed(() => projectsStore.projects.filter((p) => !p.archivedAt))
 
   async function addRule() {
-    if (!newValue.value.trim() || newProjectId.value === null) return
+    if (!newValue.value.trim() || newProjectId.value === null) {
+      return
+    }
+
     await settingsStore.createMatchRule(newProjectId.value, newType.value, newValue.value.trim())
     newValue.value = ''
   }
 
   function projectName(id: number) {
     const p = projectsStore.byId(id)
-    if (!p) return '(deleted)'
+
+    if (!p) {
+      return '(deleted)'
+    }
     if (p.parentId) {
       const parent = projectsStore.byId(p.parentId)
       return parent ? `${parent.name} › ${p.name}` : p.name
     }
+
     return p.name
   }
 

@@ -28,11 +28,14 @@
       clearTimeout(hideTimer)
       hideTimer = null
     }
+
     const el = getTarget(e)
+
     if (!el || menuVisible.value) {
       visible.value = false
       return
     }
+
     text.value = el.dataset.tooltip ?? ''
     accentColor.value = el.dataset.tooltipColor ?? null
     visible.value = true
@@ -41,6 +44,7 @@
 
   function onOut(e: MouseEvent) {
     const el = getTarget(e)
+
     if (el) {
       hideTimer = setTimeout(() => {
         visible.value = false
@@ -50,7 +54,9 @@
   }
 
   function onMove(e: MouseEvent) {
-    if (visible.value) position(e)
+    if (visible.value) {
+      position(e)
+    }
   }
 
   function onContextMenu() {
@@ -64,7 +70,10 @@
     document.addEventListener('contextmenu', onContextMenu)
   })
   onUnmounted(() => {
-    if (hideTimer) clearTimeout(hideTimer)
+    if (hideTimer) {
+      clearTimeout(hideTimer)
+    }
+
     document.removeEventListener('mouseover', onOver)
     document.removeEventListener('mouseout', onOut)
     document.removeEventListener('mousemove', onMove)

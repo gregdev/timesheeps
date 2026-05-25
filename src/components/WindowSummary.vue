@@ -45,8 +45,14 @@
   function formatDuration(totalSecs: number): string {
     const h = Math.floor(totalSecs / 3600)
     const m = Math.floor((totalSecs % 3600) / 60)
-    if (h === 0) return `${m}m`
-    if (m === 0) return `${h}h`
+
+    if (h === 0) {
+      return `${m}m`
+    }
+    if (m === 0) {
+      return `${h}h`
+    }
+
     return `${h}h ${m}m`
   }
 
@@ -56,9 +62,11 @@
    */
   function cleanTitle(appName: string, title: string): string {
     const parts = title.split(' \u2014 ')
+
     if (parts.length > 1 && parts[parts.length - 1].toLowerCase() === appName.toLowerCase()) {
       parts.pop()
     }
+
     const cleaned = parts.join(' — ')
     return cleaned.toLowerCase() === appName.toLowerCase() ? '' : cleaned
   }

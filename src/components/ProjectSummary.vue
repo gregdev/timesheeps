@@ -19,14 +19,19 @@
 
     for (const [projectId, mins] of dayStore.summary.entries()) {
       const project = projectsStore.byId(projectId)
-      if (!project) continue
+
+      if (!project) {
+        continue
+      }
 
       if (project.parentId !== null && project.parentId !== undefined) {
         const parent = projectsStore.byId(project.parentId)
+
         if (parent) {
           if (!map.has(parent.id)) {
             map.set(parent.id, { project: parent, ownMins: 0, totalMins: 0, children: [] })
           }
+
           map.get(parent.id)!.children.push({ project, mins })
         } else {
           // Orphan child (parent archived) — show standalone

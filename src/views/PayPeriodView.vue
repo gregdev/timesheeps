@@ -26,6 +26,7 @@
   function currentPayPeriodStart(anchorStr: string, freq: 'weekly' | 'fortnightly'): Date {
     const anchor = parseISO(anchorStr)
     const today = new Date()
+
     if (freq === 'weekly') {
       const dow = anchor.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
       return startOfWeek(today, { weekStartsOn: dow })
@@ -57,12 +58,15 @@
   const periodLabel = computed(() => {
     const start = periodDays.value[0]
     const end = periodDays.value[periodLength.value - 1]
+
     if (start.getFullYear() === end.getFullYear()) {
       if (start.getMonth() === end.getMonth()) {
         return `${format(start, 'MMM d')} – ${format(end, 'd, yyyy')}`
       }
+
       return `${format(start, 'MMM d')} – ${format(end, 'MMM d, yyyy')}`
     }
+
     return `${format(start, 'MMM d, yyyy')} – ${format(end, 'MMM d, yyyy')}`
   })
 
@@ -76,6 +80,7 @@
   async function loadPeriod() {
     loading.value = true
     const dates = periodDayStrings.value
+
     try {
       const results = await Promise.all(
         dates.map((date) =>
@@ -83,10 +88,12 @@
         ),
       )
       const map = new Map<string, PeriodDayData>()
+
       for (let i = 0; i < dates.length; i++) {
         const [entries, summary] = results[i]
         map.set(dates[i], { date: dates[i], entries, hasActivity: summary.length > 0 })
       }
+
       dayData.value = map
     } catch (err) {
       console.error('[timesheeps] loadPeriod failed:', err)
@@ -122,15 +129,23 @@
 
   const periodProjects = computed(() => {
     const usedIds = new Set<number>()
+
     for (const data of dayData.value.values()) {
-      for (const entry of data.entries) usedIds.add(entry.projectId)
+      for (const entry of data.entries) {
+        usedIds.add(entry.projectId)
+      }
     }
+
     return projectsStore.projects.filter((p) => !p.archivedAt && usedIds.has(p.id))
   })
 
   const allEntries = computed(() => {
     const entries: TimeEntry[] = []
-    for (const data of dayData.value.values()) entries.push(...data.entries)
+
+    for (const data of dayData.value.values()) {
+      entries.push(...data.entries)
+    }
+
     return entries
   })
 </script>

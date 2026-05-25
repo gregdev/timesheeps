@@ -11,10 +11,8 @@ use serde_json::{json, Value};
 
 // ── Database ──────────────────────────────────────────────────────────────────
 
-fn db_path() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("TIMESHEEPS_DB") {
-        return std::path::PathBuf::from(p);
-    }
+#[cfg(target_os = "windows")]
+fn platform_db_path() -> std::path::PathBuf {
     let base = std::env::var("APPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -26,6 +24,31 @@ fn db_path() -> std::path::PathBuf {
             p
         });
     base.join("app.timesheeps.Timesheeps").join("timesheeps.db")
+}
+
+#[cfg(target_os = "macos")]
+fn platform_db_path() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(|home| {
+            std::path::PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("app.timesheeps.Timesheeps")
+                .join("timesheeps.db")
+        })
+        .unwrap_or_else(|_| std::path::PathBuf::from("timesheeps.db"))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn platform_db_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("timesheeps.db")
+}
+
+fn db_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("TIMESHEEPS_DB") {
+        return std::path::PathBuf::from(p);
+    }
+    platform_db_path()
 }
 
 fn open_db() -> Result<Connection, String> {

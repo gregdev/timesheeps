@@ -351,7 +351,7 @@
                 type="checkbox"
                 @change="trackField('startOnLogin')"
               />
-              Start Timesheeps when Windows starts
+              Start Timesheeps at login
               <Transition name="check">
                 <span v-if="savedField === 'startOnLogin'" class="field-check">✓</span>
               </Transition>

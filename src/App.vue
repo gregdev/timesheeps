@@ -9,6 +9,7 @@
   import IdlePrompt from './components/IdlePrompt.vue'
   import TooltipOverlay from './components/TooltipOverlay.vue'
   import ContextMenu from './components/ContextMenu.vue'
+  import ScreenRecordingBanner from './components/ScreenRecordingBanner.vue'
   import type { IdleReturnEvent } from './schemas'
 
   const route = useRoute()
@@ -194,6 +195,7 @@
     </nav>
 
     <main class="app-main">
+      <ScreenRecordingBanner />
       <RouterView />
     </main>
 

@@ -138,6 +138,8 @@ pub fn run() {
             commands::project_match_rules::create_project_match_rule,
             commands::project_match_rules::delete_project_match_rule,
             commands::project_match_rules::get_suggested_entries_for_day,
+            commands::permissions::check_screen_recording_permission,
+            commands::permissions::request_screen_recording_permission,
         ])
         .run(tauri::generate_context!())
         .expect("error while running timesheeps");

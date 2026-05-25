@@ -230,10 +230,21 @@ fn get_foreground_window_info() -> Option<(String, String, u64)> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn get_foreground_window_info() -> Option<(String, String, u64)> {
-    // Stub: returns nothing on non-Windows platforms.
-    // Real activity tracking only happens on Windows.
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    match active_win_pos_rs::get_active_window() {
+        Ok(w) => {
+            let mut hasher = DefaultHasher::new();
+            w.window_id.hash(&mut hasher);
+            Some((w.app_name, w.title, hasher.finish()))
+        }
+        Err(_) => None,
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn get_foreground_window_info() -> Option<(String, String, u64)> {
     None
 }
 
@@ -259,7 +270,18 @@ fn get_idle_seconds() -> u64 {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state_id: i32, event_type: u32) -> f64;
+}
+
+#[cfg(target_os = "macos")]
+fn get_idle_seconds() -> u64 {
+    unsafe { CGEventSourceSecondsSinceLastEventType(1, 0xFFFF_FFFF) as u64 }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn get_idle_seconds() -> u64 {
     0
 }

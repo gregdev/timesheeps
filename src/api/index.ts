@@ -73,6 +73,8 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<void>('save_settings', { settings }),
   checkClaudeMcp: () => invoke<boolean>('check_claude_mcp'),
   setupClaudeMcp: () => invoke<void>('setup_claude_mcp'),
+  checkScreenRecordingPermission: () => invoke<boolean>('check_screen_recording_permission'),
+  requestScreenRecordingPermission: () => invoke<void>('request_screen_recording_permission'),
 
   getFilterRules: () => callArray(FilterRuleSchema, 'get_filter_rules'),
   createFilterRule: (ruleType: FilterRuleType, value: string) =>

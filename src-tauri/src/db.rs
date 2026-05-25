@@ -715,6 +715,154 @@ pub fn compute_suggestions(
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone)]
+enum TermMatch {
+    Any(String),
+    App(String),
+    Title(String),
+}
+
+#[derive(Debug, Default)]
+struct ParsedQuery {
+    include_terms: Vec<TermMatch>,
+    exclude_terms: Vec<TermMatch>,
+    date_after: Option<String>,
+    date_before: Option<String>,
+}
+
+fn parse_search_query(query: &str) -> ParsedQuery {
+    let mut parsed = ParsedQuery::default();
+    for token in query.split_whitespace() {
+        let lower = token.to_lowercase();
+        if let Some(rest) = lower.strip_prefix("-app:") {
+            if !rest.is_empty() {
+                parsed.exclude_terms.push(TermMatch::App(rest.to_string()));
+            }
+        } else if let Some(rest) = lower.strip_prefix("-title:") {
+            if !rest.is_empty() {
+                parsed.exclude_terms.push(TermMatch::Title(rest.to_string()));
+            }
+        } else if let Some(rest) = lower.strip_prefix('-') {
+            if !rest.is_empty() {
+                parsed.exclude_terms.push(TermMatch::Any(rest.to_string()));
+            }
+        } else if let Some(rest) = lower.strip_prefix("app:") {
+            if !rest.is_empty() {
+                parsed.include_terms.push(TermMatch::App(rest.to_string()));
+            }
+        } else if let Some(rest) = lower.strip_prefix("title:") {
+            if !rest.is_empty() {
+                parsed.include_terms.push(TermMatch::Title(rest.to_string()));
+            }
+        } else if let Some(rest) = lower.strip_prefix("date:") {
+            if !rest.is_empty() {
+                parsed.date_after = Some(rest.to_string());
+                parsed.date_before = Some(rest.to_string());
+            }
+        } else if let Some(rest) = lower.strip_prefix("after:") {
+            if !rest.is_empty() {
+                parsed.date_after = Some(rest.to_string());
+            }
+        } else if let Some(rest) = lower.strip_prefix("before:") {
+            if !rest.is_empty() {
+                parsed.date_before = Some(rest.to_string());
+            }
+        } else if !lower.is_empty() {
+            parsed.include_terms.push(TermMatch::Any(lower));
+        }
+    }
+    parsed
+}
+
+/// Build the WHERE clause and parameter list for activity_raw date queries.
+fn build_activity_where(parsed: &ParsedQuery) -> (String, Vec<String>) {
+    let mut conditions: Vec<String> = Vec::new();
+    let mut sql_params: Vec<String> = Vec::new();
+
+    for term in &parsed.include_terms {
+        match term {
+            TermMatch::Any(t) => {
+                conditions.push(
+                    "(LOWER(window_title) LIKE ? OR LOWER(app_name) LIKE ?)".to_string(),
+                );
+                let pat = format!("%{}%", t);
+                sql_params.push(pat.clone());
+                sql_params.push(pat);
+            }
+            TermMatch::App(t) => {
+                conditions.push("LOWER(app_name) LIKE ?".to_string());
+                sql_params.push(format!("%{}%", t));
+            }
+            TermMatch::Title(t) => {
+                conditions.push("LOWER(window_title) LIKE ?".to_string());
+                sql_params.push(format!("%{}%", t));
+            }
+        }
+    }
+    for term in &parsed.exclude_terms {
+        match term {
+            TermMatch::Any(t) => {
+                conditions.push(
+                    "NOT (LOWER(window_title) LIKE ? OR LOWER(app_name) LIKE ?)".to_string(),
+                );
+                let pat = format!("%{}%", t);
+                sql_params.push(pat.clone());
+                sql_params.push(pat);
+            }
+            TermMatch::App(t) => {
+                conditions.push("NOT LOWER(app_name) LIKE ?".to_string());
+                sql_params.push(format!("%{}%", t));
+            }
+            TermMatch::Title(t) => {
+                conditions.push("NOT LOWER(window_title) LIKE ?".to_string());
+                sql_params.push(format!("%{}%", t));
+            }
+        }
+    }
+    if let Some(after) = &parsed.date_after {
+        conditions.push("date(started_at, 'localtime') >= ?".to_string());
+        sql_params.push(after.clone());
+    }
+    if let Some(before) = &parsed.date_before {
+        conditions.push("date(started_at, 'localtime') <= ?".to_string());
+        sql_params.push(before.clone());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        "1=0".to_string()
+    } else {
+        conditions.join(" AND ")
+    };
+    (where_clause, sql_params)
+}
+
+/// Returns true if the block satisfies all include/exclude term constraints.
+fn block_matches(block: &ActivityBlock, parsed: &ParsedQuery) -> bool {
+    let app = block.app_name.to_lowercase();
+    let title = block.window_title.to_lowercase();
+    for term in &parsed.include_terms {
+        let hit = match term {
+            TermMatch::Any(t) => app.contains(t.as_str()) || title.contains(t.as_str()),
+            TermMatch::App(t) => app.contains(t.as_str()),
+            TermMatch::Title(t) => title.contains(t.as_str()),
+        };
+        if !hit {
+            return false;
+        }
+    }
+    for term in &parsed.exclude_terms {
+        let hit = match term {
+            TermMatch::Any(t) => app.contains(t.as_str()) || title.contains(t.as_str()),
+            TermMatch::App(t) => app.contains(t.as_str()),
+            TermMatch::Title(t) => title.contains(t.as_str()),
+        };
+        if hit {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn search(
     conn: &Connection,
     query: &str,
@@ -725,33 +873,36 @@ pub fn search(
         return Ok(SearchResults { days: vec![], note_matches: vec![] });
     }
 
-    let q = format!("%{}%", query.to_lowercase());
+    let parsed = parse_search_query(query);
 
-    // Distinct dates that have matching raw activity (most recent first, max 60)
-    let mut date_stmt = conn.prepare(
+    if parsed.include_terms.is_empty()
+        && parsed.exclude_terms.is_empty()
+        && parsed.date_after.is_none()
+        && parsed.date_before.is_none()
+    {
+        return Ok(SearchResults { days: vec![], note_matches: vec![] });
+    }
+
+    let (where_clause, date_params) = build_activity_where(&parsed);
+    let date_sql = format!(
         "SELECT DISTINCT date(started_at, 'localtime') as d
          FROM activity_raw
-         WHERE LOWER(window_title) LIKE ?1 OR LOWER(app_name) LIKE ?1
+         WHERE {}
          ORDER BY d DESC
          LIMIT 60",
-    )?;
+        where_clause
+    );
+    let mut date_stmt = conn.prepare(&date_sql)?;
     let dates: Vec<String> = date_stmt
-        .query_map(params![q], |row| row.get(0))?
+        .query_map(rusqlite::params_from_iter(date_params.iter()), |row| row.get(0))?
         .filter_map(|r| r.ok())
         .collect();
 
-    let q_lower = query.to_lowercase();
     let mut days = Vec::new();
     for date in &dates {
         let all_blocks = get_activity_for_date(conn, date, settings, rules)?;
-        let matched_blocks: Vec<ActivityBlock> = all_blocks
-            .iter()
-            .filter(|b| {
-                b.window_title.to_lowercase().contains(&q_lower)
-                    || b.app_name.to_lowercase().contains(&q_lower)
-            })
-            .cloned()
-            .collect();
+        let matched_blocks: Vec<ActivityBlock> =
+            all_blocks.iter().filter(|b| block_matches(b, &parsed)).cloned().collect();
         if matched_blocks.is_empty() {
             continue;
         }
@@ -764,26 +915,66 @@ pub fn search(
         });
     }
 
-    // Search time entry notes
-    let mut note_stmt = conn.prepare(
-        "SELECT id, date, project_id, start_minutes, end_minutes, note
-         FROM time_entries
-         WHERE LOWER(note) LIKE ?1
-         ORDER BY date DESC, start_minutes",
-    )?;
-    let note_matches: Vec<TimeEntry> = note_stmt
-        .query_map(params![q], |row| {
-            Ok(TimeEntry {
-                id: row.get(0)?,
-                date: row.get(1)?,
-                project_id: row.get(2)?,
-                start_minutes: row.get(3)?,
-                end_minutes: row.get(4)?,
-                note: row.get(5)?,
-            })
-        })?
-        .filter_map(|r| r.ok())
+    // Note search: apply only Any-type terms + date range.
+    // Skip entirely when all qualifiers are field-scoped (app:/title:) with no Any terms.
+    let any_includes: Vec<&str> = parsed
+        .include_terms
+        .iter()
+        .filter_map(|t| if let TermMatch::Any(s) = t { Some(s.as_str()) } else { None })
         .collect();
+    let any_excludes: Vec<&str> = parsed
+        .exclude_terms
+        .iter()
+        .filter_map(|t| if let TermMatch::Any(s) = t { Some(s.as_str()) } else { None })
+        .collect();
+
+    let search_notes =
+        !any_includes.is_empty() || parsed.date_after.is_some() || parsed.date_before.is_some();
+
+    let note_matches = if !search_notes {
+        vec![]
+    } else {
+        let mut note_conditions: Vec<String> = Vec::new();
+        let mut note_params: Vec<String> = Vec::new();
+        for t in &any_includes {
+            note_conditions.push("LOWER(note) LIKE ?".to_string());
+            note_params.push(format!("%{}%", t));
+        }
+        for t in &any_excludes {
+            note_conditions.push("NOT LOWER(note) LIKE ?".to_string());
+            note_params.push(format!("%{}%", t));
+        }
+        if let Some(after) = &parsed.date_after {
+            note_conditions.push("date >= ?".to_string());
+            note_params.push(after.clone());
+        }
+        if let Some(before) = &parsed.date_before {
+            note_conditions.push("date <= ?".to_string());
+            note_params.push(before.clone());
+        }
+        let note_sql = format!(
+            "SELECT id, date, project_id, start_minutes, end_minutes, note
+             FROM time_entries
+             WHERE {}
+             ORDER BY date DESC, start_minutes",
+            note_conditions.join(" AND ")
+        );
+        let mut note_stmt = conn.prepare(&note_sql)?;
+        let collected: Vec<TimeEntry> = note_stmt
+            .query_map(rusqlite::params_from_iter(note_params.iter()), |row| {
+                Ok(TimeEntry {
+                    id: row.get(0)?,
+                    date: row.get(1)?,
+                    project_id: row.get(2)?,
+                    start_minutes: row.get(3)?,
+                    end_minutes: row.get(4)?,
+                    note: row.get(5)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        collected
+    };
 
     Ok(SearchResults { days, note_matches })
 }

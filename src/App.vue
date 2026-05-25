@@ -19,6 +19,7 @@
   const idleEvent = ref<IdleReturnEvent | null>(null)
   const searchQuery = ref('')
   const searchInput = ref<HTMLInputElement | null>(null)
+  const showSearchHelp = ref(false)
 
   // Keep search input in sync when navigating to /search
   watch(
@@ -139,6 +140,56 @@
           @keydown.enter="doSearch"
           @keydown.escape="cancelSearch"
         />
+        <button
+          class="search-help-btn"
+          :class="{ active: showSearchHelp }"
+          title="Search operators"
+          @click.stop="showSearchHelp = !showSearchHelp"
+        >
+          ?
+        </button>
+        <template v-if="showSearchHelp">
+          <div class="search-help-backdrop" @click="showSearchHelp = false" />
+          <div class="search-help-popover">
+            <div class="search-help-title">Search operators</div>
+            <table class="search-help-table">
+              <tbody>
+                <tr>
+                  <td><code>word</code></td>
+                  <td>Match app or title</td>
+                </tr>
+                <tr>
+                  <td><code>word1 word2</code></td>
+                  <td>Both must match (AND)</td>
+                </tr>
+                <tr>
+                  <td><code>app:word</code></td>
+                  <td>App name only</td>
+                </tr>
+                <tr>
+                  <td><code>title:word</code></td>
+                  <td>Window title only</td>
+                </tr>
+                <tr>
+                  <td><code>-word</code></td>
+                  <td>Exclude results</td>
+                </tr>
+                <tr>
+                  <td><code>date:2026-05-25</code></td>
+                  <td>Exact date</td>
+                </tr>
+                <tr>
+                  <td><code>after:2026-05-01</code></td>
+                  <td>From date onward</td>
+                </tr>
+                <tr>
+                  <td><code>before:2026-05-25</code></td>
+                  <td>Up to date</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
       </div>
     </nav>
 
@@ -204,6 +255,87 @@
     margin-left: auto;
     display: flex;
     align-items: center;
+    position: relative;
+  }
+
+  .search-help-btn {
+    width: 20px;
+    height: 20px;
+    margin-left: var(--space-1);
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: none;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition:
+      background 0.15s,
+      color 0.15s;
+  }
+
+  .search-help-btn:hover,
+  .search-help-btn.active {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .search-help-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+  }
+
+  .search-help-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 51;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 15%);
+    padding: var(--space-3);
+    min-width: 280px;
+  }
+
+  .search-help-title {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--space-2);
+  }
+
+  .search-help-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: var(--text-xs);
+  }
+
+  .search-help-table td {
+    padding: 3px var(--space-2) 3px 0;
+    color: var(--text);
+    vertical-align: top;
+  }
+
+  .search-help-table td:last-child {
+    color: var(--text-faint);
+  }
+
+  .search-help-table code {
+    font-family: monospace;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 11px;
+    white-space: nowrap;
   }
 
   .search-input {

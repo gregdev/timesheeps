@@ -17,11 +17,13 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let start_hidden = std::env::args().any(|a| a == "--hidden");
+
     tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
 
             // Initialise the database
@@ -77,6 +79,13 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Hide window on autostart launch
+            if start_hidden {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            }
 
             // Start activity polling in a background task
             tauri::async_runtime::spawn(async move {

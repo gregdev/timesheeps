@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref, watch, onMounted } from 'vue'
+  import { ref, watch, nextTick, onMounted } from 'vue'
   import { useSettingsStore } from '../stores/settings'
   import { useDayStore } from '../stores/day'
   import ProjectList from '../components/ProjectList.vue'
@@ -14,7 +14,6 @@
     ...settingsStore.settings,
     titleSplitApps: [...settingsStore.settings.titleSplitApps],
   })
-  const saved = ref(false)
   const newSplitApp = ref('')
 
   function addSplitApp() {
@@ -26,39 +25,75 @@
 
     form.value.titleSplitApps = [...form.value.titleSplitApps, v]
     newSplitApp.value = ''
+    trackField('titleSplitApps')
   }
 
+  function removeSplitApp(app: string) {
+    form.value.titleSplitApps = form.value.titleSplitApps.filter((a) => a !== app)
+    trackField('titleSplitApps')
+  }
+
+  // Sync form when store changes externally
+  let updatingFromStore = false
   watch(
     () => settingsStore.settings,
-    (s: Settings) => {
+    async (s: Settings) => {
+      updatingFromStore = true
       form.value = { ...s, titleSplitApps: [...s.titleSplitApps] }
+      await nextTick()
+      updatingFromStore = false
     },
     { deep: true },
   )
 
-  async function saveSettings() {
-    await settingsStore.save({ ...form.value })
-    // Reload day to apply new filter/merge settings
-    await dayStore.loadDay()
-    saved.value = true
-    setTimeout(() => {
-      saved.value = false
+  // Auto-save on any form change (debounced)
+  const savedField = ref<string | null>(null)
+  let pendingField = ''
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  let fieldTimer: ReturnType<typeof setTimeout> | null = null
+
+  function trackField(field: string) {
+    pendingField = field
+  }
+
+  function showSaved(field: string) {
+    if (fieldTimer) {
+      clearTimeout(fieldTimer)
+    }
+
+    savedField.value = field
+    fieldTimer = setTimeout(() => {
+      savedField.value = null
     }, 2000)
   }
+
+  watch(
+    form,
+    async (s) => {
+      if (updatingFromStore) {
+        return
+      }
+      if (saveTimer) {
+        clearTimeout(saveTimer)
+      }
+
+      saveTimer = setTimeout(async () => {
+        await settingsStore.save({ ...s })
+        await dayStore.loadDay()
+        showSaved(pendingField)
+      }, 400)
+    },
+    { deep: true },
+  )
+
+  watch(
+    () => settingsStore.colourScheme,
+    () => showSaved('colourScheme'),
+  )
 
   type ClaudeStatus = 'idle' | 'loading' | 'success' | 'already' | 'error'
   const claudeStatus = ref<ClaudeStatus>('idle')
   const claudeError = ref('')
-
-  onMounted(async () => {
-    try {
-      if (await api.checkClaudeMcp()) {
-        claudeStatus.value = 'already'
-      }
-    } catch {
-      // silently ignore — detection is best-effort
-    }
-  })
 
   async function setupClaude() {
     claudeStatus.value = 'loading'
@@ -72,6 +107,16 @@
       claudeError.value = e instanceof Error ? e.message : String(e)
     }
   }
+
+  onMounted(async () => {
+    try {
+      if (await api.checkClaudeMcp()) {
+        claudeStatus.value = 'already'
+      }
+    } catch {
+      // silently ignore — detection is best-effort
+    }
+  })
 </script>
 
 <template>
@@ -79,13 +124,42 @@
     <div class="settings-scroll">
       <div class="settings-col">
         <section class="settings-section">
+          <h2>Appearance</h2>
+
+          <div class="settings-grid">
+            <div class="form-group">
+              <label>
+                Colour scheme
+                <Transition name="check">
+                  <span v-if="savedField === 'colourScheme'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <select v-model="settingsStore.colourScheme">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
           <h2>Timeline</h2>
 
           <div class="settings-grid">
             <div class="form-group">
-              <label>Timeline start</label>
+              <label>
+                Timeline start
+                <Transition name="check">
+                  <span v-if="savedField === 'timelineStartHour'" class="field-check">✓</span>
+                </Transition>
+              </label>
 
-              <select v-model.number="form.timelineStartHour">
+              <select
+                v-model.number="form.timelineStartHour"
+                @change="trackField('timelineStartHour')"
+              >
                 <option v-for="h in Array.from({ length: 13 }, (_, i) => i)" :key="h" :value="h">
                   {{ h }}:00
                 </option>
@@ -93,9 +167,14 @@
             </div>
 
             <div class="form-group">
-              <label>Timeline end</label>
+              <label>
+                Timeline end
+                <Transition name="check">
+                  <span v-if="savedField === 'timelineEndHour'" class="field-check">✓</span>
+                </Transition>
+              </label>
 
-              <select v-model.number="form.timelineEndHour">
+              <select v-model.number="form.timelineEndHour" @change="trackField('timelineEndHour')">
                 <option
                   v-for="h in Array.from({ length: 9 }, (_, i) => i + 16)"
                   :key="h"
@@ -107,9 +186,14 @@
             </div>
 
             <div class="form-group">
-              <label>Week starts on</label>
+              <label>
+                Week starts on
+                <Transition name="check">
+                  <span v-if="savedField === 'weekStartsOn'" class="field-check">✓</span>
+                </Transition>
+              </label>
 
-              <select v-model.number="form.weekStartsOn">
+              <select v-model.number="form.weekStartsOn" @change="trackField('weekStartsOn')">
                 <option :value="1">Monday</option>
                 <option :value="0">Sunday</option>
               </select>
@@ -118,12 +202,60 @@
         </section>
 
         <section class="settings-section">
-          <h2>Activity Tracking</h2>
+          <h2>Pay Schedule</h2>
+
           <div class="settings-grid">
             <div class="form-group">
-              <label>Minimum duration shown</label>
+              <label>
+                Pay frequency
+                <Transition name="check">
+                  <span v-if="savedField === 'payScheduleFrequency'" class="field-check">✓</span>
+                </Transition>
+              </label>
 
-              <select v-model.number="form.minDurationSecs">
+              <select
+                v-model="form.payScheduleFrequency"
+                @change="trackField('payScheduleFrequency')"
+              >
+                <option value="weekly">Weekly</option>
+                <option value="fortnightly">Fortnightly</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>
+                Pay period start date
+                <Transition name="check">
+                  <span v-if="savedField === 'payScheduleAnchor'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <input
+                v-model="form.payScheduleAnchor"
+                type="date"
+                @change="trackField('payScheduleAnchor')"
+              />
+
+              <p class="field-hint">
+                A known pay period start date — used to calculate all past and future periods.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Activity Tracking</h2>
+
+          <div class="settings-grid">
+            <div class="form-group">
+              <label>
+                Minimum duration shown
+                <Transition name="check">
+                  <span v-if="savedField === 'minDurationSecs'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <select v-model.number="form.minDurationSecs" @change="trackField('minDurationSecs')">
                 <option :value="10">10 seconds</option>
                 <option :value="30">30 seconds</option>
                 <option :value="60">1 minute</option>
@@ -135,9 +267,17 @@
             </div>
 
             <div class="form-group">
-              <label>Window summary minimum</label>
+              <label>
+                Window summary minimum
+                <Transition name="check">
+                  <span v-if="savedField === 'windowSummaryMinSecs'" class="field-check">✓</span>
+                </Transition>
+              </label>
 
-              <select v-model.number="form.windowSummaryMinSecs">
+              <select
+                v-model.number="form.windowSummaryMinSecs"
+                @change="trackField('windowSummaryMinSecs')"
+              >
                 <option :value="30">30 seconds</option>
                 <option :value="60">1 minute</option>
                 <option :value="120">2 minutes</option>
@@ -149,59 +289,92 @@
                 Windows with less total time than this are hidden from the activity summary panel.
               </p>
             </div>
+
             <div class="form-group">
-              <label>Merge gap</label>
-              <select v-model.number="form.mergeGapSecs">
+              <label>
+                Merge gap
+                <Transition name="check">
+                  <span v-if="savedField === 'mergeGapSecs'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <select v-model.number="form.mergeGapSecs" @change="trackField('mergeGapSecs')">
                 <option :value="30">30 seconds</option>
                 <option :value="60">1 minute</option>
                 <option :value="120">2 minutes</option>
                 <option :value="300">5 minutes</option>
               </select>
+
               <p class="field-hint">Consecutive same-app events within this gap are merged.</p>
             </div>
+
             <div class="form-group">
-              <label>Idle timeout</label>
-              <select v-model.number="form.idleTimeoutSecs">
+              <label>
+                Idle timeout
+                <Transition name="check">
+                  <span v-if="savedField === 'idleTimeoutSecs'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <select v-model.number="form.idleTimeoutSecs" @change="trackField('idleTimeoutSecs')">
                 <option :value="120">2 minutes</option>
                 <option :value="300">5 minutes</option>
                 <option :value="600">10 minutes</option>
                 <option :value="900">15 minutes</option>
               </select>
+
               <p class="field-hint">Recording pauses after this much inactivity.</p>
             </div>
+
             <div class="form-group">
-              <label>Time snap</label>
-              <select v-model.number="form.snapMinutes">
+              <label>
+                Time snap
+                <Transition name="check">
+                  <span v-if="savedField === 'snapMinutes'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <select v-model.number="form.snapMinutes" @change="trackField('snapMinutes')">
                 <option :value="1">1 minute</option>
                 <option :value="5">5 minutes</option>
                 <option :value="10">10 minutes</option>
                 <option :value="15">15 minutes</option>
               </select>
+
               <p class="field-hint">Rounding increment for dragging and hover tooltip.</p>
             </div>
           </div>
           <div class="form-group form-group--inline">
             <label class="checkbox-label">
-              <input v-model="form.startOnLogin" type="checkbox" />
+              <input
+                v-model="form.startOnLogin"
+                type="checkbox"
+                @change="trackField('startOnLogin')"
+              />
               Start Timesheeps when Windows starts
+              <Transition name="check">
+                <span v-if="savedField === 'startOnLogin'" class="field-check">✓</span>
+              </Transition>
             </label>
           </div>
 
           <div class="form-group form-group--full">
-            <label>Split Window Activity by tab title</label>
+            <label>
+              Split Window Activity by tab title
+              <Transition name="check">
+                <span v-if="savedField === 'titleSplitApps'" class="field-check">✓</span>
+              </Transition>
+            </label>
+
             <p class="field-hint">
               For these apps, each distinct window title gets its own row instead of being grouped
               by window. Useful for browsers.
             </p>
+
             <div class="split-apps">
               <span v-for="app in form.titleSplitApps" :key="app" class="split-chip">
                 {{ app }}
-                <button
-                  class="chip-remove"
-                  @click="form.titleSplitApps = form.titleSplitApps.filter((a) => a !== app)"
-                >
-                  ×
-                </button>
+                <button class="chip-remove" @click="removeSplitApp(app)">×</button>
               </span>
               <div class="split-add">
                 <input
@@ -210,21 +383,18 @@
                   style="width: 120px"
                   @keyup.enter="addSplitApp"
                 />
+
                 <button class="btn-primary" :disabled="!newSplitApp.trim()" @click="addSplitApp">
                   Add
                 </button>
               </div>
             </div>
           </div>
-
-          <div class="save-row">
-            <button class="btn-primary" @click="saveSettings">Save settings</button>
-            <span v-if="saved" class="saved-msg">✓ Saved</span>
-          </div>
         </section>
 
         <section class="settings-section">
           <h2>Claude AI</h2>
+
           <label>
             Claude Desktop app integration - ask Claude "what did I work on today?" and it will
             query your activity data directly.
@@ -240,10 +410,13 @@
                     : 'Set up Claude MCP'
               }}
             </button>
+
             <span v-if="claudeStatus === 'already'" class="saved-msg">✓ Already configured</span>
+
             <span v-if="claudeStatus === 'success'" class="saved-msg">
               ✓ Configured — restart Claude Desktop to apply
             </span>
+
             <span v-if="claudeStatus === 'error'" class="error-msg">{{ claudeError }}</span>
           </div>
 
@@ -272,52 +445,79 @@
     flex-direction: column;
   }
 
+  .field-check {
+    display: inline-block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--success);
+    margin-left: var(--space-1);
+  }
+
+  .check-enter-active {
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
+  }
+
+  .check-leave-active {
+    transition:
+      opacity 0.5s ease,
+      transform 0.5s ease;
+  }
+
+  .check-enter-from,
+  .check-leave-to {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
   .settings-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    padding: var(--space-5);
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 48px;
+    gap: var(--space-12);
     align-items: start;
   }
 
   .settings-col {
     display: flex;
     flex-direction: column;
-    gap: 28px;
+    gap: var(--space-7);
   }
 
   .settings-section {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: var(--space-4);
   }
 
   .settings-section--card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 16px;
+    padding: var(--space-4);
   }
 
-  .settings-section h2 {
-    font-size: 15px;
+  .settings-section h2,
+  .settings-section :deep(h2) {
+    font-size: var(--text-lg);
     font-weight: 600;
-    padding-bottom: 10px;
+    padding-bottom: var(--space-3);
     border-bottom: 1px solid var(--border);
   }
 
   .settings-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 14px;
+    gap: var(--space-4);
   }
 
   .field-hint {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-faint);
-    margin-top: 4px;
+    margin-top: var(--space-1);
   }
 
   .form-group--inline {
@@ -328,25 +528,25 @@
     grid-column: 1 / -1;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--space-2);
   }
 
   .split-apps {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--space-2);
     align-items: center;
   }
 
   .split-chip {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 8px 3px 10px;
+    gap: var(--space-1);
+    padding: 3px var(--space-2) 3px 10px;
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 20px;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
 
   .chip-remove {
@@ -359,7 +559,7 @@
     background: none;
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--text-sm);
     padding: 0;
     line-height: 1;
   }
@@ -370,15 +570,15 @@
 
   .split-add {
     display: flex;
-    gap: 6px;
+    gap: var(--space-2);
     align-items: center;
   }
 
   .checkbox-label {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 13px;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
     cursor: pointer;
   }
 
@@ -388,28 +588,22 @@
     cursor: pointer;
   }
 
-  .save-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
   .claude-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
 
   .error-msg {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--danger);
     font-weight: 500;
   }
 
   .saved-msg {
-    font-size: 12px;
-    color: #22c55e;
+    font-size: var(--text-xs);
+    color: var(--success);
     font-weight: 500;
     animation: fade-in 0.2s ease;
   }

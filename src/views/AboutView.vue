@@ -58,7 +58,11 @@
       <p class="app-version">Version {{ version }}</p>
 
       <div class="update-section">
-        <button class="btn-check" :disabled="updateStatus === 'checking'" @click="checkForUpdates">
+        <button
+          class="btn-primary"
+          :disabled="updateStatus === 'checking'"
+          @click="checkForUpdates"
+        >
           {{ updateStatus === 'checking' ? 'Checking…' : 'Check for updates' }}
         </button>
 
@@ -83,27 +87,27 @@
     align-items: center;
     justify-content: center;
     height: 100%;
-    padding: 32px;
+    padding: var(--space-8);
   }
 
   .about-card {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .app-icon {
     width: 96px;
     height: 96px;
     border-radius: 20px;
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
     user-select: none;
     -webkit-user-drag: none;
   }
 
   .app-name {
-    font-size: 28px;
+    font-size: var(--text-3xl);
     font-weight: 700;
     margin: 0;
     color: var(--text);
@@ -112,7 +116,7 @@
   .app-author {
     position: relative;
     top: -8px;
-    font-size: 18px;
+    font-size: var(--text-lg);
     color: var(--text-muted);
     margin: 0;
 
@@ -122,7 +126,7 @@
   }
 
   .app-version {
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--text);
     margin: 0;
   }
@@ -131,33 +135,12 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
-    margin-top: 16px;
-  }
-
-  .btn-check {
-    padding: 7px 20px;
-    border-radius: var(--radius);
-    background: var(--primary);
-    color: #fff;
-    font-size: 16px;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-    transition: opacity 0.15s;
-  }
-
-  .btn-check:disabled {
-    opacity: 0.55;
-    cursor: default;
-  }
-
-  .btn-check:hover:not(:disabled) {
-    opacity: 0.85;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
   }
 
   .status-msg {
-    font-size: 13px;
+    font-size: var(--text-sm);
     margin: 0;
   }
 
@@ -179,7 +162,7 @@
   }
 
   .status-err {
-    color: var(--danger, #e53e3e);
+    color: var(--danger);
     max-width: 320px;
     text-align: center;
   }

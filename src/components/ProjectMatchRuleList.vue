@@ -73,17 +73,10 @@
 
     <!-- Rules list -->
     <div class="list">
-      <div
-        v-if="settingsStore.projectMatchRules.length === 0"
-        class="empty"
-      >
+      <div v-if="settingsStore.projectMatchRules.length === 0" class="empty">
         No match rules yet.
       </div>
-      <div
-        v-for="rule in settingsStore.projectMatchRules"
-        :key="rule.id"
-        class="rule-row"
-      >
+      <div v-for="rule in settingsStore.projectMatchRules" :key="rule.id" class="rule-row">
         <span class="color-dot" :style="{ background: projectColor(rule.projectId) }" />
         <span class="rule-project">{{ projectName(rule.projectId) }}</span>
         <span class="rule-type">
@@ -102,23 +95,23 @@
   .match-rules {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .section-header h3 {
-    font-size: 14px;
+    font-size: var(--text-sm);
     font-weight: 600;
   }
 
   .hint {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     margin: 0;
   }
 
   .add-form {
     display: flex;
-    gap: 6px;
+    gap: var(--space-2);
     align-items: center;
     flex-wrap: wrap;
   }
@@ -126,24 +119,24 @@
   .list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
   }
 
   .empty {
-    font-size: 13px;
+    font-size: var(--text-sm);
     color: var(--text-muted);
-    padding: 8px 0;
+    padding: var(--space-2) 0;
   }
 
   .rule-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     padding: 7px 10px;
     border-radius: var(--radius);
     background: var(--surface);
     border: 1px solid var(--border);
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 
   .color-dot {
@@ -168,7 +161,7 @@
     background: var(--surface-2);
     padding: 1px 6px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: var(--text-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

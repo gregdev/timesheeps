@@ -92,9 +92,9 @@
     z-index: 9999;
     background: color-mix(in srgb, var(--accent) 22%, #1e293b);
     color: #f1f5f9;
-    padding: 5px 10px;
+    padding: var(--space-1) var(--space-2);
     border-radius: 6px;
-    font-size: 11.5px;
+    font-size: var(--text-xs);
     font-family: var(--font);
     white-space: pre-line;
     line-height: 1.6;

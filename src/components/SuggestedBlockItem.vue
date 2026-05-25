@@ -46,7 +46,7 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
-    padding: 2px 6px;
+    padding: 2px var(--space-2);
     overflow: hidden;
     cursor: pointer;
     z-index: 4;
@@ -62,7 +62,7 @@
   }
 
   .project-name {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--color);
     white-space: nowrap;
@@ -72,7 +72,7 @@
   }
 
   .accept-hint {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--color);
     opacity: 0.7;
     white-space: nowrap;

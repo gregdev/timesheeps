@@ -299,9 +299,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 16px 10px;
+    padding: 14px var(--space-4) 10px;
     font-weight: 600;
-    font-size: 14px;
+    font-size: var(--text-sm);
     border-bottom: 1px solid var(--border);
   }
 
@@ -310,29 +310,29 @@
   }
 
   .modal-body {
-    padding: 14px 16px;
+    padding: 14px var(--space-4);
   }
 
   .time-range {
-    font-size: 15px;
+    font-size: var(--text-sm);
     font-weight: 600;
     margin-bottom: 14px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .duration-badge {
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 500;
     background: var(--surface-2);
     color: var(--text-muted);
-    padding: 2px 8px;
+    padding: 2px var(--space-2);
     border-radius: 10px;
   }
 
   .hint {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     margin-top: 4px;
   }
@@ -377,10 +377,10 @@
   .dropdown-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     padding: 7px 10px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--text-sm);
     transition: background 0.1s;
   }
 
@@ -399,7 +399,7 @@
   .item-label {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -408,7 +408,7 @@
 
   .parent-hint {
     color: var(--text-faint);
-    font-size: 11px;
+    font-size: var(--text-xs);
     flex-shrink: 0;
   }
 
@@ -423,8 +423,8 @@
   .modal-footer {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 16px 14px;
+    gap: var(--space-2);
+    padding: 10px var(--space-4) 14px;
     border-top: 1px solid var(--border);
   }
 

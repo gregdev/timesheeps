@@ -19,22 +19,29 @@
 
     // Aggregate minutes per project from entries
     const totalsMap = new Map<number, number>()
+
     for (const entry of props.entries) {
       const mins = entry.endMinutes - entry.startMinutes
       totalsMap.set(entry.projectId, (totalsMap.get(entry.projectId) ?? 0) + mins)
     }
 
     const map = new Map<number, Group>()
+
     for (const [projectId, mins] of totalsMap.entries()) {
       const project = projectsStore.byId(projectId)
-      if (!project) continue
+
+      if (!project) {
+        continue
+      }
 
       if (project.parentId !== null && project.parentId !== undefined) {
         const parent = projectsStore.byId(project.parentId)
+
         if (parent) {
           if (!map.has(parent.id)) {
             map.set(parent.id, { project: parent, ownMins: 0, totalMins: 0, children: [] })
           }
+
           map.get(parent.id)!.children.push({ project, mins })
         } else {
           // Orphan child (parent archived) — show standalone
@@ -120,12 +127,12 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    padding: 8px 14px;
+    padding: var(--space-2) 14px;
     border-bottom: 1px solid var(--border);
   }
 
   .ps-title {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -133,7 +140,7 @@
   }
 
   .ps-grand-total {
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--primary);
   }
@@ -141,7 +148,7 @@
   .ps-list {
     list-style: none;
     margin: 0;
-    padding: 4px 0;
+    padding: var(--space-1) 0;
     display: flex;
     flex-wrap: wrap;
   }
@@ -157,8 +164,8 @@
     display: grid;
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
-    gap: 0 8px;
-    padding: 6px 14px;
+    gap: 0 var(--space-2);
+    padding: var(--space-2) var(--space-4);
     transition: background 0.12s;
   }
 
@@ -167,7 +174,7 @@
   }
 
   .ps-child {
-    padding: 3px 14px 3px 26px;
+    padding: var(--space-1) var(--space-4) var(--space-1) var(--space-7);
   }
 
   .ps-bar-wrap {
@@ -175,13 +182,13 @@
     height: 3px;
     background: var(--border);
     border-radius: 2px;
-    margin-bottom: 5px;
+    margin-bottom: var(--space-1);
     overflow: hidden;
   }
 
   .ps-child .ps-bar-wrap {
     height: 2px;
-    margin-bottom: 3px;
+    margin-bottom: var(--space-1);
   }
 
   .ps-bar {
@@ -198,7 +205,7 @@
   .ps-labels {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -210,7 +217,7 @@
   }
 
   .ps-name {
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -218,13 +225,13 @@
   }
 
   .ps-child-name {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 400;
     color: var(--text-muted);
   }
 
   .ps-dur {
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
     white-space: nowrap;
@@ -232,7 +239,7 @@
   }
 
   .ps-child-dur {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 400;
     color: var(--text-muted);
   }

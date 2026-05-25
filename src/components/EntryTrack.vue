@@ -184,14 +184,14 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 11px;
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
     pointer-events: none;
     z-index: 7;
     white-space: nowrap;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 15%);
   }
 
   .drag-preview {

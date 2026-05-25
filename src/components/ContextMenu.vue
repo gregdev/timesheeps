@@ -81,7 +81,7 @@
     z-index: 9999;
     list-style: none;
     margin: 0;
-    padding: 4px 0;
+    padding: var(--space-1) 0;
     min-width: 180px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -105,8 +105,8 @@
   }
 
   .context-menu-item {
-    padding: 7px 14px;
-    font-size: 13px;
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--text-sm);
     color: var(--text);
     cursor: default;
     user-select: none;

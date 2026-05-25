@@ -149,20 +149,20 @@
     height: var(--nav-height);
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 0 16px;
+    gap: var(--space-1);
+    padding: 0 var(--space-4);
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     flex-shrink: 0;
   }
 
   .nav-link {
-    padding: 5px 12px;
+    padding: 5px var(--space-3);
     border-radius: var(--radius);
     color: var(--text-muted);
     text-decoration: none;
     font-weight: 500;
-    font-size: 13px;
+    font-size: var(--text-sm);
     transition:
       background 0.15s,
       color 0.15s;
@@ -199,7 +199,7 @@
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--text-sm);
     outline: none;
     transition:
       border-color 0.15s,

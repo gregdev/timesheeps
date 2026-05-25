@@ -1,6 +1,9 @@
 <script setup lang="ts">
   import { computed } from 'vue'
   import type { ActivityBlock } from '../schemas'
+  import { useAppColour } from '../composables/useAppColour'
+
+  const { appColour: appColor } = useAppColour()
 
   const props = defineProps<{
     allBlocks: ActivityBlock[]
@@ -27,24 +30,6 @@
     const e = isoToMin(endIso)
     const left = leftPct(startIso)
     return Math.max(0.3, Math.min(100 - left, ((e - s) / totalMin.value) * 100))
-  }
-
-  function appColor(name: string): string {
-    const palette = [
-      '#6366f1',
-      '#8b5cf6',
-      '#ec4899',
-      '#f43f5e',
-      '#f97316',
-      '#eab308',
-      '#22c55e',
-      '#06b6d4',
-      '#3b82f6',
-      '#14b8a6',
-    ]
-    let h = 0
-    for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0
-    return palette[h % palette.length]
   }
 
   // Hour tick positions for the hour grid

@@ -5,6 +5,7 @@
   import { useEntryModal } from '../composables/useEntryModal'
   import { useContextMenu } from '../composables/useContextMenu'
   import { useSettingsStore } from '../stores/settings'
+  import { useAppColour } from '../composables/useAppColour'
   import type { WindowSummaryItem } from '../schemas'
 
   const dayStore = useDayStore()
@@ -12,6 +13,7 @@
   const { pendingCreate } = useEntryModal()
   const { open: openMenu } = useContextMenu()
   const settingsStore = useSettingsStore()
+  const { appColour: appColor } = useAppColour()
 
   function onItemContextMenu(e: MouseEvent, item: WindowSummaryItem) {
     openMenu(e, [
@@ -38,24 +40,6 @@
         },
       },
     ])
-  }
-
-  function appColor(name: string): string {
-    const palette = [
-      '#6366f1',
-      '#8b5cf6',
-      '#ec4899',
-      '#f43f5e',
-      '#f97316',
-      '#eab308',
-      '#22c55e',
-      '#06b6d4',
-      '#3b82f6',
-      '#14b8a6',
-    ]
-    let h = 0
-    for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0
-    return palette[h % palette.length]
   }
 
   function formatDuration(totalSecs: number): string {
@@ -137,13 +121,13 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    padding: 10px 14px 8px;
+    padding: var(--space-2) var(--space-4) var(--space-2);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
   .ws-title {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -151,20 +135,20 @@
   }
 
   .ws-total {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
   }
 
   .ws-empty {
-    padding: 20px 14px;
-    font-size: 12px;
+    padding: var(--space-5) var(--space-4);
+    font-size: var(--text-xs);
     color: var(--text-muted);
   }
 
   .ws-list {
     list-style: none;
     margin: 0;
-    padding: 6px 0;
+    padding: var(--space-2) 0;
     overflow-y: auto;
     flex: 1;
   }
@@ -173,8 +157,8 @@
     display: grid;
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
-    gap: 0 8px;
-    padding: 6px 14px;
+    gap: 0 var(--space-2);
+    padding: var(--space-2) var(--space-4);
     transition: background 0.12s;
   }
 
@@ -187,7 +171,7 @@
     height: 3px;
     background: var(--border);
     border-radius: 2px;
-    margin-bottom: 5px;
+    margin-bottom: var(--space-1);
     overflow: hidden;
   }
 
@@ -206,7 +190,7 @@
   }
 
   .ws-app {
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -214,7 +198,7 @@
   }
 
   .ws-window {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -222,7 +206,7 @@
   }
 
   .ws-dur {
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
     white-space: nowrap;

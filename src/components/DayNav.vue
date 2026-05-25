@@ -49,18 +49,18 @@
   .day-nav {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 8px 16px;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     flex-shrink: 0;
   }
 
   .arrow {
-    font-size: 20px;
+    font-size: var(--text-xl);
     line-height: 1;
-    width: 28px;
-    height: 28px;
+    width: var(--space-7);
+    height: var(--space-7);
     padding: 0;
     display: flex;
     align-items: center;
@@ -74,15 +74,15 @@
   .date-label {
     background: transparent;
     border: none;
-    font-size: 14px;
+    font-size: var(--text-sm);
     font-weight: 600;
     color: var(--text);
     cursor: pointer;
-    padding: 4px 10px;
+    padding: var(--space-1) 10px;
     border-radius: var(--radius);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .date-label:hover {
@@ -90,11 +90,11 @@
   }
 
   .today-badge {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     background: var(--primary);
     color: #fff;
-    padding: 2px 7px;
+    padding: 2px var(--space-2);
     border-radius: 10px;
   }
 </style>

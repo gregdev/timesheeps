@@ -7,11 +7,13 @@
   import { useSettingsStore } from '../stores/settings'
   import type { SearchResults } from '../schemas'
   import SearchDayTimeline from '../components/SearchDayTimeline.vue'
+  import { useAppColour } from '../composables/useAppColour'
 
   const route = useRoute()
   const router = useRouter()
   const dayStore = useDayStore()
   const settingsStore = useSettingsStore()
+  const { appColour: appColor } = useAppColour()
 
   const loading = ref(false)
   const results = ref<SearchResults | null>(null)
@@ -93,24 +95,6 @@
     const h = Math.floor(min / 60)
     const m = min % 60
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
-  }
-
-  function appColor(name: string): string {
-    const palette = [
-      '#6366f1',
-      '#8b5cf6',
-      '#ec4899',
-      '#f43f5e',
-      '#f97316',
-      '#eab308',
-      '#22c55e',
-      '#06b6d4',
-      '#3b82f6',
-      '#14b8a6',
-    ]
-    let h = 0
-    for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0
-    return palette[h % palette.length]
   }
 
   function cleanTitle(appName: string, title: string): string {
@@ -260,16 +244,16 @@
   .search-main {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 20px;
+    padding: var(--space-4) var(--space-5);
     min-width: 0;
   }
 
   .search-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 20px;
-    font-size: 13px;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+    font-size: var(--text-sm);
     color: var(--text-muted);
     min-height: 24px;
   }
@@ -293,43 +277,43 @@
   }
 
   .search-error {
-    color: var(--danger, #ef4444);
+    color: var(--danger);
   }
 
   .search-empty {
-    padding: 40px 0;
+    padding: var(--space-10) 0;
     text-align: center;
     color: var(--text-muted);
-    font-size: 14px;
+    font-size: var(--text-sm);
   }
 
   /* ── Day groups ──────────────────────────────────────────────────────────── */
 
   .day-group {
-    margin-bottom: 28px;
+    margin-bottom: var(--space-7);
   }
 
   .day-header {
     display: flex;
     align-items: baseline;
-    gap: 10px;
-    margin-bottom: 4px;
+    gap: var(--space-3);
+    margin-bottom: var(--space-1);
   }
 
   .day-date {
-    font-size: 14px;
+    font-size: var(--text-sm);
     font-weight: 600;
     color: var(--text);
   }
 
   .day-meta {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
   }
 
   .day-link {
     margin-left: auto;
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--primary);
     background: none;
     border: none;

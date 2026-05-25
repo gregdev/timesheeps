@@ -29,13 +29,13 @@
 <style scoped>
   .idle-prompt {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
+    bottom: var(--space-5);
+    right: var(--space-5);
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
     box-shadow: var(--shadow-md);
-    padding: 12px 14px;
+    padding: var(--space-3) 14px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -53,11 +53,11 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
 
   .idle-body strong {
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 
   .idle-body span {

@@ -164,7 +164,7 @@
 
   .block-body {
     flex: 1;
-    padding: 2px 6px;
+    padding: 2px var(--space-2);
     cursor: grab;
     overflow: hidden;
     display: flex;
@@ -178,7 +178,7 @@
   }
 
   .project-name {
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--color);
     white-space: nowrap;
@@ -187,7 +187,7 @@
   }
 
   .duration {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -195,7 +195,7 @@
   }
 
   .note {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;

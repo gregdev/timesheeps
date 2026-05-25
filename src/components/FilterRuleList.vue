@@ -55,41 +55,36 @@
   .filter-rules {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-  }
-
-  .section-header h3 {
-    font-size: 18px;
-    font-weight: 600;
+    gap: var(--space-3);
   }
 
   .hint {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     margin-top: -6px;
   }
 
   .add-form {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
   }
 
   .list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
   }
 
   .empty {
-    font-size: 13px;
+    font-size: var(--text-sm);
     color: var(--text-muted);
   }
 
   .rule-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     padding: 7px 10px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -97,7 +92,7 @@
   }
 
   .rule-type {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     flex-shrink: 0;
   }
@@ -105,7 +100,7 @@
   .rule-value {
     flex: 1;
     font-family: monospace;
-    font-size: 12px;
+    font-size: var(--text-xs);
     background: var(--surface-2);
     padding: 2px 6px;
     border-radius: 4px;

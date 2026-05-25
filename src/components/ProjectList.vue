@@ -26,7 +26,11 @@
 
   async function addRule() {
     if (!newRuleValue.value.trim() || !editing.value) return
-    await settingsStore.createMatchRule(editing.value.id, newRuleType.value, newRuleValue.value.trim())
+    await settingsStore.createMatchRule(
+      editing.value.id,
+      newRuleType.value,
+      newRuleValue.value.trim(),
+    )
     newRuleValue.value = ''
   }
 
@@ -99,6 +103,11 @@
     newParentId.value = null
   }
 
+  function cancelEdit() {
+    editing.value = null
+    newRuleValue.value = ''
+  }
+
   async function submitEdit() {
     if (!editing.value || !editing.value.name.trim()) {
       return
@@ -119,7 +128,7 @@
 <template>
   <div class="project-list">
     <div class="section-header">
-      <h3>Projects</h3>
+      <h2>Projects</h2>
       <button class="btn-primary" @click="creating = true">+ New project</button>
     </div>
 
@@ -217,24 +226,24 @@
                   class="rule-value-input"
                   @keyup.enter="addRule"
                 />
-                <button
-                  class="btn-secondary"
-                  :disabled="!newRuleValue.trim()"
-                  @click="addRule"
-                >
+                <button class="btn-secondary" :disabled="!newRuleValue.trim()" @click="addRule">
                   Add
                 </button>
               </div>
               <div v-if="editingRules.length === 0" class="match-empty">No rules yet.</div>
               <div v-for="rule in editingRules" :key="rule.id" class="match-rule-row">
-                <span class="rule-badge">{{ rule.ruleType === 'title_pattern' ? 'title' : 'app' }}</span>
+                <span class="rule-badge">
+                  {{ rule.ruleType === 'title_pattern' ? 'title' : 'app' }}
+                </span>
                 <code class="rule-val">{{ rule.value }}</code>
-                <button class="btn-ghost danger sm" @click="settingsStore.deleteMatchRule(rule.id)">×</button>
+                <button class="btn-ghost danger sm" @click="settingsStore.deleteMatchRule(rule.id)">
+                  ×
+                </button>
               </div>
             </div>
           </div>
 
-          <button class="btn-secondary" @click="editing = null; newRuleValue = ''">Cancel</button>
+          <button class="btn-secondary" @click="cancelEdit">Cancel</button>
           <button class="btn-primary" @click="submitEdit">Save</button>
         </template>
 
@@ -269,7 +278,7 @@
   .project-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .section-header {
@@ -278,16 +287,11 @@
     justify-content: space-between;
   }
 
-  .section-header h3 {
-    font-size: 14px;
-    font-weight: 600;
-  }
-
   .edit-form {
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 12px;
+    padding: var(--space-3);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -295,7 +299,7 @@
 
   .form-row {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     align-items: flex-end;
     flex-wrap: wrap;
   }
@@ -306,13 +310,13 @@
 
   .form-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     justify-content: flex-end;
   }
 
   .swatches {
     display: flex;
-    gap: 5px;
+    gap: var(--space-1);
     flex-wrap: wrap;
   }
 
@@ -337,16 +341,16 @@
   }
 
   .empty {
-    font-size: 13px;
+    font-size: var(--text-sm);
     color: var(--text-muted);
-    padding: 12px 0;
+    padding: var(--space-3) 0;
   }
 
   .project-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 10px;
+    padding: var(--space-2) 10px;
     border-radius: var(--radius);
     background: var(--surface);
     border: 1px solid var(--border);
@@ -363,7 +367,7 @@
   }
 
   .child-indent {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-faint);
     flex-shrink: 0;
   }
@@ -377,10 +381,10 @@
 
   .p-name {
     flex: 1;
-    font-size: 13px;
+    font-size: var(--text-sm);
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
   }
 
   .text-muted {
@@ -388,16 +392,16 @@
   }
 
   .archived-tag {
-    font-size: 10px;
+    font-size: var(--text-xs);
     background: var(--surface-2);
     color: var(--text-faint);
-    padding: 1px 5px;
+    padding: 1px var(--space-1);
     border-radius: 4px;
   }
 
   .row-actions {
     display: flex;
-    gap: 4px;
+    gap: var(--space-1);
   }
 
   .btn-ghost.danger {
@@ -416,12 +420,12 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding-top: 8px;
+    padding-top: var(--space-2);
     border-top: 1px solid var(--border);
   }
 
   .match-rules-label {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
@@ -430,7 +434,7 @@
 
   .match-add-row {
     display: flex;
-    gap: 6px;
+    gap: var(--space-2);
     align-items: center;
   }
 
@@ -445,23 +449,23 @@
   }
 
   .match-empty {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--text-faint);
   }
 
   .match-rule-row {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
   }
 
   .rule-badge {
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 3px;
-    padding: 1px 5px;
-    font-size: 10px;
+    padding: 1px var(--space-1);
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text-muted);
     flex-shrink: 0;
@@ -476,7 +480,7 @@
 
   .btn-ghost.sm {
     padding: 1px 6px;
-    font-size: 14px;
+    font-size: var(--text-sm);
     line-height: 1;
   }
 </style>

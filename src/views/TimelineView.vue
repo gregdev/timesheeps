@@ -120,12 +120,12 @@
     bottom: 0;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
   }
 
   .copy-btn {
-    font-size: 12px;
-    padding: 4px 10px;
+    font-size: var(--text-xs);
+    padding: var(--space-1) var(--space-2);
     white-space: nowrap;
   }
 
@@ -147,8 +147,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #ef4444;
-    padding: 16px;
+    color: var(--danger);
+    padding: var(--space-4);
     text-align: center;
     white-space: pre-wrap;
     background: var(--bg);

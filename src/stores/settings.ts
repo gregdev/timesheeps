@@ -34,6 +34,7 @@ export const useSettingsStore = defineStore('settings', () => {
       'Zen',
       'Chromium',
     ],
+    titleGroupApps: ['Code'],
     weekStartsOn: 1,
     payScheduleFrequency: 'weekly',
     payScheduleAnchor: new Date().toISOString().slice(0, 10),

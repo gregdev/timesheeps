@@ -99,6 +99,7 @@ fn seed_default_settings(conn: &Connection) -> Result<()> {
         ("snap_minutes", defaults.snap_minutes.to_string()),
         ("window_summary_min_secs", defaults.window_summary_min_secs.to_string()),
         ("title_split_apps", "Brave,Chrome,Firefox,msedge,Opera,Vivaldi,Arc,Zen,Chromium".to_string()),
+        ("title_group_apps", "Code".to_string()),
         ("week_starts_on", "1".to_string()),
         ("pay_schedule_frequency", defaults.pay_schedule_frequency.clone()),
         ("pay_schedule_anchor", defaults.pay_schedule_anchor.clone()),
@@ -210,6 +211,71 @@ pub fn get_activity_for_date(
     Ok(merge_and_filter(raw, settings, rules))
 }
 
+/// Try to extract a project/workspace name from an IDE window title.
+///
+/// For VS Code titles like:
+///   "file.ts - myproject [WSL: Ubuntu] - Visual Studio Code"
+/// or:
+///   "file.ts — myproject — Visual Studio Code"
+///
+/// The algorithm:
+/// 1. Strip the trailing app name if present (e.g. " - Visual Studio Code")
+/// 2. Strip any trailing [...] bracket segment
+/// 3. Return the last ` — ` or ` - ` segment as the project name
+///
+/// Returns None if no meaningful project name can be extracted.
+fn extract_title_group_key(app_name: &str, window_title: &str) -> Option<String> {
+    let title = window_title.trim();
+    if title.is_empty() {
+        return None;
+    }
+
+    // Strip trailing " - AppName" or " — AppName" (case-insensitive)
+    let app_suffixes = [
+        format!(" - {}", app_name),
+        format!(" — {}", app_name),
+    ];
+    let mut stripped = title.to_string();
+    for suffix in &app_suffixes {
+        if stripped.to_lowercase().ends_with(&suffix.to_lowercase()) {
+            stripped = stripped[..stripped.len() - suffix.len()].to_string();
+            break;
+        }
+    }
+
+    // Strip trailing [...] bracket (e.g. "[WSL: LightbulbUbuntu]")
+    if let Some(bracket_start) = stripped.rfind('[') {
+        if stripped.ends_with(']') {
+            let before = stripped[..bracket_start].trim().to_string();
+            if !before.is_empty() {
+                stripped = before;
+            }
+        }
+    }
+
+    // Split by " — " or " - " and take the last non-empty segment
+    let segments: Vec<&str> = stripped
+        .split(" — ")
+        .flat_map(|s| s.split(" - "))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if segments.len() <= 1 {
+        // Only one segment — that's probably just the filename, not a project.
+        // Return None so we fall back to window_id grouping.
+        return None;
+    }
+
+    let candidate = segments.last().unwrap().to_string();
+    // If the candidate looks like a filename (has an extension), skip it
+    if candidate.contains('.') && candidate.len() < 60 {
+        return None;
+    }
+
+    Some(candidate)
+}
+
 /// Aggregate ALL raw activity for the day by window (no min-duration filter).
 /// Groups by window_id when available, falling back to window_title for legacy rows.
 /// The representative title for each group is taken from the longest individual segment.
@@ -228,25 +294,43 @@ pub fn get_window_summary_for_date(
     for event in &raw {
         let duration = (event.ended_at - event.started_at).num_seconds();
         // Apps in title_split_apps are grouped by window title (e.g. browsers where
-        // each tab is a distinct title but shares the same HWND). All other apps use
-        // window_id so that file switches inside the same project window are merged.
+        // each tab is a distinct title but shares the same HWND).
         let split_by_title = settings
             .title_split_apps
             .iter()
             .any(|a| a.eq_ignore_ascii_case(&event.app_name));
+        // Apps in title_group_apps are grouped by a project name extracted from the
+        // title so that closing/reopening the app (new HWND) still merges entries.
+        let group_key = if !split_by_title {
+            settings
+                .title_group_apps
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(&event.app_name))
+                .then(|| extract_title_group_key(&event.app_name, &event.window_title))
+                .flatten()
+        } else {
+            None
+        };
+
         let key = if split_by_title {
             (event.app_name.clone(), format!("ttl:{}", event.window_title))
+        } else if let Some(ref gk) = group_key {
+            (event.app_name.clone(), format!("grp:{}", gk))
         } else if event.window_id != 0 {
             (event.app_name.clone(), format!("wid:{}", event.window_id))
         } else {
             (event.app_name.clone(), format!("ttl:{}", event.window_title))
         };
+
+        // For title_group_apps, use the extracted project name as the display title
+        let display_title = group_key.as_ref().unwrap_or(&event.window_title);
+
         let entry = groups
             .entry(key)
-            .or_insert((0, event.window_title.clone(), 0));
+            .or_insert((0, display_title.clone(), 0));
         entry.0 += duration;
         if duration > entry.2 {
-            entry.1 = event.window_title.clone(); // title from longest segment
+            entry.1 = display_title.clone();
             entry.2 = duration;
         }
     }
@@ -577,6 +661,15 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         .ok()
         .map(|s| s.split(',').filter(|p| !p.is_empty()).map(str::to_string).collect())
         .unwrap_or_else(|| d.title_split_apps.clone());
+    let title_group_apps: Vec<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params!["title_group_apps"],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .map(|s| s.split(',').filter(|p| !p.is_empty()).map(str::to_string).collect())
+        .unwrap_or_else(|| d.title_group_apps.clone());
     Ok(Settings {
         min_duration_secs: get("min_duration_secs", d.min_duration_secs),
         merge_gap_secs: get("merge_gap_secs", d.merge_gap_secs),
@@ -587,6 +680,7 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         snap_minutes: get("snap_minutes", d.snap_minutes),
         window_summary_min_secs: get("window_summary_min_secs", d.window_summary_min_secs),
         title_split_apps,
+        title_group_apps,
         week_starts_on: get("week_starts_on", d.week_starts_on),
         pay_schedule_frequency: get_str("pay_schedule_frequency", &d.pay_schedule_frequency),
         pay_schedule_anchor: get_str("pay_schedule_anchor", &d.pay_schedule_anchor),
@@ -604,6 +698,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
         ("snap_minutes", s.snap_minutes.to_string()),
         ("window_summary_min_secs", s.window_summary_min_secs.to_string()),
         ("title_split_apps", s.title_split_apps.join(",")),
+        ("title_group_apps", s.title_group_apps.join(",")),
         ("week_starts_on", s.week_starts_on.to_string()),
         ("pay_schedule_frequency", s.pay_schedule_frequency.clone()),
         ("pay_schedule_anchor", s.pay_schedule_anchor.clone()),

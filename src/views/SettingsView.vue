@@ -13,8 +13,10 @@
   const form = ref<Settings>({
     ...settingsStore.settings,
     titleSplitApps: [...settingsStore.settings.titleSplitApps],
+    titleGroupApps: [...settingsStore.settings.titleGroupApps],
   })
   const newSplitApp = ref('')
+  const newGroupApp = ref('')
 
   function addSplitApp() {
     const v = newSplitApp.value.trim()
@@ -33,13 +35,34 @@
     trackField('titleSplitApps')
   }
 
+  function addGroupApp() {
+    const v = newGroupApp.value.trim()
+
+    if (!v || form.value.titleGroupApps.some((a: string) => a.toLowerCase() === v.toLowerCase())) {
+      return
+    }
+
+    form.value.titleGroupApps = [...form.value.titleGroupApps, v]
+    newGroupApp.value = ''
+    trackField('titleGroupApps')
+  }
+
+  function removeGroupApp(app: string) {
+    form.value.titleGroupApps = form.value.titleGroupApps.filter((a) => a !== app)
+    trackField('titleGroupApps')
+  }
+
   // Sync form when store changes externally
   let updatingFromStore = false
   watch(
     () => settingsStore.settings,
     async (s: Settings) => {
       updatingFromStore = true
-      form.value = { ...s, titleSplitApps: [...s.titleSplitApps] }
+      form.value = {
+        ...s,
+        titleSplitApps: [...s.titleSplitApps],
+        titleGroupApps: [...s.titleGroupApps],
+      }
       await nextTick()
       updatingFromStore = false
     },
@@ -385,6 +408,40 @@
                 />
 
                 <button class="btn-primary" :disabled="!newSplitApp.trim()" @click="addSplitApp">
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group form-group--full">
+            <label>
+              Group by project name in title
+              <Transition name="check">
+                <span v-if="savedField === 'titleGroupApps'" class="field-check">✓</span>
+              </Transition>
+            </label>
+
+            <p class="field-hint">
+              For these apps, closing and reopening the window (which gives a new window ID) still
+              merges entries by extracting the project/workspace name from the title. Useful for
+              IDEs like VS&nbsp;Code.
+            </p>
+
+            <div class="split-apps">
+              <span v-for="app in form.titleGroupApps" :key="app" class="split-chip">
+                {{ app }}
+                <button class="chip-remove" @click="removeGroupApp(app)">×</button>
+              </span>
+              <div class="split-add">
+                <input
+                  v-model="newGroupApp"
+                  placeholder="App name…"
+                  style="width: 120px"
+                  @keyup.enter="addGroupApp"
+                />
+
+                <button class="btn-primary" :disabled="!newGroupApp.trim()" @click="addGroupApp">
                   Add
                 </button>
               </div>

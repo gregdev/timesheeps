@@ -162,6 +162,12 @@ pub struct Settings {
     /// Window Activity summary instead of grouped by window ID. Useful for
     /// browsers where each tab has a distinct title but shares the same HWND.
     pub title_split_apps: Vec<String>,
+    /// App names (case-insensitive) that should be grouped by a "project name"
+    /// extracted from the window title, ignoring window_id. Useful for IDEs
+    /// where closing/reopening gives a new HWND but the project is the same.
+    /// The extraction strips the app-name suffix and any [...] bracket, then
+    /// takes the last ` — ` or ` - ` segment as the group key.
+    pub title_group_apps: Vec<String>,
     /// Day of week weeks start on: 0 = Sunday, 1 = Monday.
     pub week_starts_on: i64,
     /// Pay frequency: "weekly" or "fortnightly".
@@ -182,6 +188,7 @@ impl Default for Settings {
             snap_minutes: 5,
             window_summary_min_secs: 60,
             title_split_apps: vec!["Brave".to_string(), "Chrome".to_string(), "Firefox".to_string(), "msedge".to_string(), "Opera".to_string(), "Vivaldi".to_string(), "Arc".to_string(), "Zen".to_string(), "Chromium".to_string()],
+            title_group_apps: vec!["Code".to_string()],
             week_starts_on: 1,
             pay_schedule_frequency: "weekly".to_string(),
             pay_schedule_anchor: Local::now().format("%Y-%m-%d").to_string(),

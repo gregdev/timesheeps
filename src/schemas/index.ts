@@ -63,6 +63,7 @@ export const SettingsSchema = z.object({
   snapMinutes: z.number(),
   windowSummaryMinSecs: z.number(),
   titleSplitApps: z.array(z.string()),
+  titleGroupApps: z.array(z.string()),
   weekStartsOn: z.number(),
   payScheduleFrequency: z.enum(['weekly', 'fortnightly']),
   payScheduleAnchor: z.string(),

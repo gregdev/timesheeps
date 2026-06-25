@@ -1,9 +1,11 @@
 <script setup lang="ts">
-  import { ref, onMounted, watch } from 'vue'
+  import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
   import type { TimeEntry } from '../schemas'
   import { useDayStore } from '../stores/day'
+  import { useSettingsStore } from '../stores/settings'
   import { useTimeline } from '../composables/useTimeline'
   import { useEntryModal } from '../composables/useEntryModal'
+  import { useContextMenu } from '../composables/useContextMenu'
   import TimeRuler from './TimeRuler.vue'
   import ActivityBlockItem from './ActivityBlockItem.vue'
   import EntryTrack from './EntryTrack.vue'
@@ -12,10 +14,83 @@
   defineOptions({ inheritAttrs: false })
 
   const dayStore = useDayStore()
+  const settingsStore = useSettingsStore()
   const { totalHeight, hours, minuteToY } = useTimeline()
   const { pendingCreate, editingEntry } = useEntryModal()
+  const { open: openMenu } = useContextMenu()
 
   const scrollRef = ref<HTMLElement>()
+
+  // ---- column resize ----
+  const splitRatio = ref(settingsStore.settings.timelineColSplitPct / 100)
+  const isResizing = ref(false)
+
+  const activityPct = computed(() => Math.round(splitRatio.value * 100))
+
+  function onResizeStart(e: MouseEvent) {
+    if (e.button !== 0) {return}
+
+    e.preventDefault()
+    isResizing.value = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onResizeMove)
+    document.addEventListener('mouseup', onResizeEnd)
+  }
+
+  function onResizeMove(e: MouseEvent) {
+    if (!scrollRef.value) {return}
+
+    const body = scrollRef.value.querySelector('.timeline-body') as HTMLElement
+
+    if (!body) {return}
+
+    const rect = body.getBoundingClientRect()
+    const rulerW = 44 // .ruler-spacer width
+    const handleW = 6 // .track-divider width
+    const available = rect.width - rulerW - handleW
+
+    if (available <= 0) {return}
+
+    let ratio = (e.clientX - rect.left - rulerW) / available
+    ratio = Math.max(0.15, Math.min(0.85, ratio))
+    splitRatio.value = ratio
+  }
+
+  function onResizeEnd() {
+    isResizing.value = false
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', onResizeMove)
+    document.removeEventListener('mouseup', onResizeEnd)
+    // persist
+    settingsStore.save({
+      ...settingsStore.settings,
+      timelineColSplitPct: Math.round(splitRatio.value * 100),
+    })
+  }
+
+  function onHandleContextMenu(e: MouseEvent) {
+    openMenu(e, [
+      {
+        label: 'Reset to default (50/50)',
+        action: () => {
+          splitRatio.value = 0.5
+          settingsStore.save({
+            ...settingsStore.settings,
+            timelineColSplitPct: 50,
+          })
+        },
+      },
+    ])
+  }
+
+  onUnmounted(() => {
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', onResizeMove)
+    document.removeEventListener('mouseup', onResizeEnd)
+  })
 
   function onRequestCreate(start: number, end: number) {
     pendingCreate.value = { startMinutes: start, endMinutes: end, note: '' }
@@ -77,8 +152,9 @@
     <!-- Column headers -->
     <div class="col-headers">
       <div class="ruler-spacer" />
-      <div class="col-header">Activity</div>
-      <div class="col-header entry-header">My Time</div>
+      <div class="col-header" :style="{ flex: `0 0 ${activityPct}%` }">Activity</div>
+      <div class="resize-spacer" />
+      <div class="col-header entry-header" style="flex: 1 1 0%">My Time</div>
     </div>
 
     <!-- Scrollable timeline body -->
@@ -98,7 +174,10 @@
         <TimeRuler />
 
         <!-- Activity track (left, read-only) -->
-        <div class="activity-track" :style="{ height: totalHeight + 'px' }">
+        <div
+          class="activity-track"
+          :style="{ height: totalHeight + 'px', flex: `0 0 ${activityPct}%` }"
+        >
           <TransitionGroup name="activity">
             <ActivityBlockItem
               v-for="(block, i) in dayStore.activityBlocks"
@@ -112,8 +191,13 @@
           </div>
         </div>
 
-        <!-- Divider -->
-        <div class="track-divider" />
+        <!-- Resize handle between columns -->
+        <div
+          class="track-divider"
+          :class="{ resizing: isResizing }"
+          @mousedown="onResizeStart"
+          @contextmenu="onHandleContextMenu"
+        />
 
         <!-- Entry track (right, user drags to create) -->
         <EntryTrack
@@ -175,6 +259,11 @@
     border-right: none;
   }
 
+  .resize-spacer {
+    width: 6px;
+    flex-shrink: 0;
+  }
+
   .scroll-area {
     flex: 1;
     overflow: hidden auto;
@@ -211,9 +300,28 @@
   }
 
   .track-divider {
-    width: 1px;
+    width: 6px;
     background: var(--border);
     flex-shrink: 0;
+    cursor: col-resize;
+    position: relative;
+    transition: background 0.15s;
+    user-select: none;
+  }
+
+  .track-divider::after {
+    content: '';
+    position: absolute;
+    inset: 0 2px;
+    background: transparent;
+    border-radius: 2px;
+    transition: background 0.15s;
+  }
+
+  .track-divider:hover::after,
+  .track-divider.resizing::after {
+    background: var(--primary);
+    opacity: 0.4;
   }
 
   .empty-track {

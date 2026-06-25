@@ -174,6 +174,13 @@ pub struct Settings {
     pub pay_schedule_frequency: String,
     /// A known pay period start date (YYYY-MM-DD) used to anchor all pay period calculations.
     pub pay_schedule_anchor: String,
+    /// Column split percentage for the Activity track in the timeline (0–100).
+    /// 50 = equal split between Activity and My Time columns.
+    pub timeline_col_split_pct: i64,
+    /// Width of the Window Activity summary panel in pixels.
+    pub layout_window_summary_width: i64,
+    /// Width of the Project Time summary panel in pixels.
+    pub layout_project_summary_width: i64,
 }
 
 impl Default for Settings {
@@ -192,6 +199,9 @@ impl Default for Settings {
             week_starts_on: 1,
             pay_schedule_frequency: "weekly".to_string(),
             pay_schedule_anchor: Local::now().format("%Y-%m-%d").to_string(),
+            timeline_col_split_pct: 50,
+            layout_window_summary_width: 220,
+            layout_project_summary_width: 220,
         }
     }
 }
@@ -241,4 +251,55 @@ pub struct DaySearchResult {
 pub struct SearchResults {
     pub days: Vec<DaySearchResult>,
     pub note_matches: Vec<TimeEntry>,
+}
+
+// ── Timer ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum TimerStatus {
+    Stopped,
+    Running,
+    Paused,
+}
+
+impl TimerStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TimerStatus::Stopped => "stopped",
+            TimerStatus::Running => "running",
+            TimerStatus::Paused => "paused",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimerState {
+    pub status: TimerStatus,
+    pub project_id: Option<i64>,
+    pub project_name: Option<String>,
+    pub project_color: Option<String>,
+    pub note: String,
+    pub started_at: Option<DateTime<Utc>>,
+    pub accumulated_ms: i64,
+    pub paused_at: Option<DateTime<Utc>>,
+    /// Total elapsed millis displayed to user (wall-clock based)
+    pub elapsed_ms: i64,
+}
+
+impl Default for TimerState {
+    fn default() -> Self {
+        TimerState {
+            status: TimerStatus::Stopped,
+            project_id: None,
+            project_name: None,
+            project_color: None,
+            note: String::new(),
+            started_at: None,
+            accumulated_ms: 0,
+            paused_at: None,
+            elapsed_ms: 0,
+        }
+    }
 }

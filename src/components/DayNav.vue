@@ -85,6 +85,8 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    min-width: 17.5rem;
+    justify-content: center;
   }
 
   .date-label:hover {

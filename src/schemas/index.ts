@@ -67,6 +67,9 @@ export const SettingsSchema = z.object({
   weekStartsOn: z.number(),
   payScheduleFrequency: z.enum(['weekly', 'fortnightly']),
   payScheduleAnchor: z.string(),
+  timelineColSplitPct: z.number(),
+  layoutWindowSummaryWidth: z.number(),
+  layoutProjectSummaryWidth: z.number(),
 })
 export type Settings = z.infer<typeof SettingsSchema>
 
@@ -97,3 +100,21 @@ export const SearchResultsSchema = z.object({
   noteMatches: z.array(TimeEntrySchema),
 })
 export type SearchResults = z.infer<typeof SearchResultsSchema>
+
+// ── Timer ────────────────────────────────────────────────────────────────────
+
+export const TimerStatusSchema = z.enum(['stopped', 'running', 'paused'])
+export type TimerStatus = z.infer<typeof TimerStatusSchema>
+
+export const TimerStateSchema = z.object({
+  status: TimerStatusSchema,
+  projectId: z.number().nullable(),
+  projectName: z.string().nullable(),
+  projectColor: z.string().nullable(),
+  note: z.string(),
+  startedAt: z.string().nullable(),
+  accumulatedMs: z.number(),
+  pausedAt: z.string().nullable(),
+  elapsedMs: z.number(),
+})
+export type TimerState = z.infer<typeof TimerStateSchema>

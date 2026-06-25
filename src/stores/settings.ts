@@ -38,6 +38,9 @@ export const useSettingsStore = defineStore('settings', () => {
     weekStartsOn: 1,
     payScheduleFrequency: 'weekly',
     payScheduleAnchor: new Date().toISOString().slice(0, 10),
+    timelineColSplitPct: 50,
+    layoutWindowSummaryWidth: 220,
+    layoutProjectSummaryWidth: 220,
   })
   const colourScheme = ref<ColourScheme>(
     (localStorage.getItem('colourScheme') as ColourScheme | null) ?? 'system',
@@ -90,6 +93,28 @@ export const useSettingsStore = defineStore('settings', () => {
     projectMatchRules.value = projectMatchRules.value.filter((r) => r.id !== id)
   }
 
+  async function addToTitleSplitApps(appName: string) {
+    if (settings.value.titleSplitApps.some((a) => a.toLowerCase() === appName.toLowerCase())) {
+      return
+    }
+    const updated = {
+      ...settings.value,
+      titleSplitApps: [...settings.value.titleSplitApps, appName],
+    }
+    await save(updated)
+  }
+
+  async function addToTitleGroupApps(appName: string) {
+    if (settings.value.titleGroupApps.some((a) => a.toLowerCase() === appName.toLowerCase())) {
+      return
+    }
+    const updated = {
+      ...settings.value,
+      titleGroupApps: [...settings.value.titleGroupApps, appName],
+    }
+    await save(updated)
+  }
+
   return {
     settings,
     colourScheme,
@@ -101,5 +126,7 @@ export const useSettingsStore = defineStore('settings', () => {
     deleteRule,
     createMatchRule,
     deleteMatchRule,
+    addToTitleSplitApps,
+    addToTitleGroupApps,
   }
 })

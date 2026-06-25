@@ -16,6 +16,13 @@
   const { appColour: appColor } = useAppColour()
 
   function onItemContextMenu(e: MouseEvent, item: WindowSummaryItem) {
+    const alreadySplit = settingsStore.settings.titleSplitApps.some(
+      (a) => a.toLowerCase() === item.appName.toLowerCase(),
+    )
+    const alreadyGrouped = settingsStore.settings.titleGroupApps.some(
+      (a) => a.toLowerCase() === item.appName.toLowerCase(),
+    )
+
     openMenu(e, [
       {
         label: 'Track to project…',
@@ -30,6 +37,20 @@
               ? Math.round(isoToMinutes(matching[matching.length - 1].endedAt))
               : 10 * 60
           pendingCreate.value = { startMinutes, endMinutes, note: item.appName }
+        },
+      },
+      {
+        label: alreadySplit ? '✓ Split by tab title' : 'Split by tab title',
+        action: async () => {
+          await settingsStore.addToTitleSplitApps(item.appName)
+          await dayStore.loadDay(undefined, true)
+        },
+      },
+      {
+        label: alreadyGrouped ? '✓ Group by project name' : 'Group by project name',
+        action: async () => {
+          await settingsStore.addToTitleGroupApps(item.appName)
+          await dayStore.loadDay(undefined, true)
         },
       },
       {

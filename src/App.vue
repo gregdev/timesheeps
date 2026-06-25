@@ -1,15 +1,17 @@
 <script setup lang="ts">
-  import { onMounted, onUnmounted, ref, watch } from 'vue'
+  import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
   import { RouterView, RouterLink, useRoute, useRouter } from 'vue-router'
   import { listen } from '@tauri-apps/api/event'
   import { getCurrentWindow } from '@tauri-apps/api/window'
   import { useProjectsStore } from './stores/projects'
   import { useSettingsStore } from './stores/settings'
   import { useDayStore } from './stores/day'
+  import { useTimerStore } from './stores/timer'
   import IdlePrompt from './components/IdlePrompt.vue'
   import TooltipOverlay from './components/TooltipOverlay.vue'
   import ContextMenu from './components/ContextMenu.vue'
   import ScreenRecordingBanner from './components/ScreenRecordingBanner.vue'
+  import TimerWidget from './components/TimerWidget.vue'
   import type { IdleReturnEvent } from './schemas'
 
   const route = useRoute()
@@ -17,7 +19,9 @@
   const projectsStore = useProjectsStore()
   const settingsStore = useSettingsStore()
   const dayStore = useDayStore()
+  const timerStore = useTimerStore()
   const idleEvent = ref<IdleReturnEvent | null>(null)
+  const isMiniView = computed(() => route.path === '/timer-popup')
   const searchQuery = ref('')
   const searchInput = ref<HTMLInputElement | null>(null)
   const showSearchHelp = ref(false)
@@ -78,6 +82,7 @@
   let unlistenFocus: (() => void) | null = null
 
   onMounted(async () => {
+    // ── Full init for main window ───────────────────────────────────────
     window.addEventListener('keydown', onKeyDown)
     unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
@@ -93,6 +98,7 @@
         .catch((e: unknown) => console.error('[timesheeps] settings load failed:', e)),
     ])
     await dayStore.loadDay()
+    timerStore.init()
     listen<IdleReturnEvent>('idle-return', (event) => {
       idleEvent.value = event.payload
     })
@@ -101,97 +107,102 @@
   onUnmounted(() => {
     window.removeEventListener('keydown', onKeyDown)
     unlistenFocus?.()
+    timerStore.destroy()
   })
 </script>
 
 <template>
   <div class="app">
-    <nav class="app-nav">
-      <RouterLink to="/" class="nav-link" :class="{ active: route.path === '/' }">
-        Timeline
-      </RouterLink>
+    <nav class="app-nav" :class="{ 'app-nav--mini': isMiniView }">
+      <template v-if="!isMiniView">
+        <RouterLink to="/" class="nav-link" :class="{ active: route.path === '/' }">
+          Timeline
+        </RouterLink>
 
-      <RouterLink to="/week" class="nav-link" :class="{ active: route.path === '/week' }">
-        Week
-      </RouterLink>
+        <RouterLink to="/week" class="nav-link" :class="{ active: route.path === '/week' }">
+          Week
+        </RouterLink>
 
-      <RouterLink
-        to="/pay-period"
-        class="nav-link"
-        :class="{ active: route.path === '/pay-period' }"
-      >
-        Pay Period
-      </RouterLink>
-
-      <RouterLink to="/settings" class="nav-link" :class="{ active: route.path === '/settings' }">
-        Settings
-      </RouterLink>
-
-      <RouterLink to="/about" class="nav-link" :class="{ active: route.path === '/about' }">
-        About
-      </RouterLink>
-
-      <div class="nav-search">
-        <input
-          ref="searchInput"
-          v-model="searchQuery"
-          type="search"
-          class="search-input"
-          placeholder="Search… (/)"
-          @keydown.enter="doSearch"
-          @keydown.escape="cancelSearch"
-        />
-        <button
-          class="search-help-btn"
-          :class="{ active: showSearchHelp }"
-          title="Search operators"
-          @click.stop="showSearchHelp = !showSearchHelp"
+        <RouterLink
+          to="/pay-period"
+          class="nav-link"
+          :class="{ active: route.path === '/pay-period' }"
         >
-          ?
-        </button>
-        <template v-if="showSearchHelp">
-          <div class="search-help-backdrop" @click="showSearchHelp = false" />
-          <div class="search-help-popover">
-            <div class="search-help-title">Search operators</div>
-            <table class="search-help-table">
-              <tbody>
-                <tr>
-                  <td><code>word</code></td>
-                  <td>Match app or title</td>
-                </tr>
-                <tr>
-                  <td><code>word1 word2</code></td>
-                  <td>Both must match (AND)</td>
-                </tr>
-                <tr>
-                  <td><code>app:word</code></td>
-                  <td>App name only</td>
-                </tr>
-                <tr>
-                  <td><code>title:word</code></td>
-                  <td>Window title only</td>
-                </tr>
-                <tr>
-                  <td><code>-word</code></td>
-                  <td>Exclude results</td>
-                </tr>
-                <tr>
-                  <td><code>date:2026-05-25</code></td>
-                  <td>Exact date</td>
-                </tr>
-                <tr>
-                  <td><code>after:2026-05-01</code></td>
-                  <td>From date onward</td>
-                </tr>
-                <tr>
-                  <td><code>before:2026-05-25</code></td>
-                  <td>Up to date</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </template>
-      </div>
+          Pay Period
+        </RouterLink>
+
+        <RouterLink to="/settings" class="nav-link" :class="{ active: route.path === '/settings' }">
+          Settings
+        </RouterLink>
+
+        <RouterLink to="/about" class="nav-link" :class="{ active: route.path === '/about' }">
+          About
+        </RouterLink>
+
+        <div class="nav-search">
+          <input
+            ref="searchInput"
+            v-model="searchQuery"
+            type="search"
+            class="search-input"
+            placeholder="Search… (/)"
+            @keydown.enter="doSearch"
+            @keydown.escape="cancelSearch"
+          />
+          <button
+            class="search-help-btn"
+            :class="{ active: showSearchHelp }"
+            title="Search operators"
+            @click.stop="showSearchHelp = !showSearchHelp"
+          >
+            ?
+          </button>
+          <template v-if="showSearchHelp">
+            <div class="search-help-backdrop" @click="showSearchHelp = false" />
+            <div class="search-help-popover">
+              <div class="search-help-title">Search operators</div>
+              <table class="search-help-table">
+                <tbody>
+                  <tr>
+                    <td><code>word</code></td>
+                    <td>Match app or title</td>
+                  </tr>
+                  <tr>
+                    <td><code>word1 word2</code></td>
+                    <td>Both must match (AND)</td>
+                  </tr>
+                  <tr>
+                    <td><code>app:word</code></td>
+                    <td>App name only</td>
+                  </tr>
+                  <tr>
+                    <td><code>title:word</code></td>
+                    <td>Window title only</td>
+                  </tr>
+                  <tr>
+                    <td><code>-word</code></td>
+                    <td>Exclude results</td>
+                  </tr>
+                  <tr>
+                    <td><code>date:2026-05-25</code></td>
+                    <td>Exact date</td>
+                  </tr>
+                  <tr>
+                    <td><code>after:2026-05-01</code></td>
+                    <td>From date onward</td>
+                  </tr>
+                  <tr>
+                    <td><code>before:2026-05-25</code></td>
+                    <td>Up to date</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <TimerWidget />
     </nav>
 
     <main class="app-main">
@@ -222,6 +233,14 @@
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     flex-shrink: 0;
+  }
+
+  .app-nav--mini {
+    height: auto;
+    min-height: 0;
+    border-bottom: none;
+    padding: 0;
+    justify-content: flex-end;
   }
 
   .nav-link {

@@ -6,6 +6,7 @@ import AboutView from '../views/AboutView.vue'
 const WeekView = () => import('../views/WeekView.vue')
 const SearchView = () => import('../views/SearchView.vue')
 const PayPeriodView = () => import('../views/PayPeriodView.vue')
+const TimerPopupView = () => import('../views/TimerPopupView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -16,5 +17,6 @@ export const router = createRouter({
     { path: '/settings', component: SettingsView },
     { path: '/about', component: AboutView },
     { path: '/search', component: SearchView },
+    { path: '/timer-popup', component: TimerPopupView },
   ],
 })

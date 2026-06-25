@@ -8,12 +8,89 @@
   import ProjectSummary from '../components/ProjectSummary.vue'
   import { useDayStore } from '../stores/day'
   import { useProjectsStore } from '../stores/projects'
+  import { useSettingsStore } from '../stores/settings'
   import { useTimeline } from '../composables/useTimeline'
+  import { useContextMenu } from '../composables/useContextMenu'
 
   const dayStore = useDayStore()
   const projectsStore = useProjectsStore()
+  const settingsStore = useSettingsStore()
   const { formatDuration, minutesToTime } = useTimeline()
+  const { open: openMenu } = useContextMenu()
   const copied = ref(false)
+
+  // ---- panel resize ----
+  const windowSummaryWidth = ref(settingsStore.settings.layoutWindowSummaryWidth)
+  const projectSummaryWidth = ref(settingsStore.settings.layoutProjectSummaryWidth)
+  const resizingHandle = ref<'ws' | 'ps' | null>(null)
+
+  function onResizeStart(handle: 'ws' | 'ps', e: MouseEvent) {
+    if (e.button !== 0) return
+    e.preventDefault()
+    resizingHandle.value = handle
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onResizeMove)
+    document.addEventListener('mouseup', onResizeEnd)
+  }
+
+  function onResizeMove(e: MouseEvent) {
+    if (resizingHandle.value === 'ws') {
+      // Resize timeline-canvas ↔ window-summary; project-summary unchanged
+      const area = document.querySelector('.main-area') as HTMLElement | null
+      if (!area) return
+      const rect = area.getBoundingClientRect()
+      // windowSummaryWidth = distance from right edge, minus project-summary and handle widths
+      const psW = projectSummaryWidth.value
+      const handleW = 6
+      const newWsW = rect.right - e.clientX - psW - handleW
+      windowSummaryWidth.value = Math.max(100, Math.min(500, Math.round(newWsW)))
+    } else if (resizingHandle.value === 'ps') {
+      const area = document.querySelector('.main-area') as HTMLElement | null
+      if (!area) return
+      const rect = area.getBoundingClientRect()
+      const newPsW = rect.right - e.clientX
+      projectSummaryWidth.value = Math.max(100, Math.min(500, Math.round(newPsW)))
+    }
+  }
+
+  function onResizeEnd() {
+    resizingHandle.value = null
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', onResizeMove)
+    document.removeEventListener('mouseup', onResizeEnd)
+    // persist
+    settingsStore.save({
+      ...settingsStore.settings,
+      layoutWindowSummaryWidth: windowSummaryWidth.value,
+      layoutProjectSummaryWidth: projectSummaryWidth.value,
+    })
+  }
+
+  function onHandleContextMenu(handle: 'ws' | 'ps', e: MouseEvent) {
+    const label =
+      handle === 'ws'
+        ? 'Reset Window Summary to default (220px)'
+        : 'Reset Project Summary to default (220px)'
+    openMenu(e, [
+      {
+        label,
+        action: () => {
+          if (handle === 'ws') {
+            windowSummaryWidth.value = 220
+          } else {
+            projectSummaryWidth.value = 220
+          }
+          settingsStore.save({
+            ...settingsStore.settings,
+            layoutWindowSummaryWidth: windowSummaryWidth.value,
+            layoutProjectSummaryWidth: projectSummaryWidth.value,
+          })
+        },
+      },
+    ])
+  }
 
   function copyDay() {
     const date = format(parseISO(dayStore.selectedDate), 'EEEE, MMMM d, yyyy')
@@ -71,6 +148,10 @@
     if (unlistenActivityUpdated) {
       unlistenActivityUpdated()
     }
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', onResizeMove)
+    document.removeEventListener('mouseup', onResizeEnd)
   })
 </script>
 
@@ -94,8 +175,20 @@
       <div v-if="dayStore.loadError" class="load-error">
         Error loading data: {{ dayStore.loadError }}
       </div>
-      <WindowSummary />
-      <ProjectSummary />
+      <div
+        class="panel-handle"
+        :class="{ resizing: resizingHandle === 'ws' }"
+        @mousedown="onResizeStart('ws', $event)"
+        @contextmenu="onHandleContextMenu('ws', $event)"
+      />
+      <WindowSummary :style="{ width: windowSummaryWidth + 'px' }" />
+      <div
+        class="panel-handle"
+        :class="{ resizing: resizingHandle === 'ps' }"
+        @mousedown="onResizeStart('ps', $event)"
+        @contextmenu="onHandleContextMenu('ps', $event)"
+      />
+      <ProjectSummary :style="{ width: projectSummaryWidth + 'px' }" />
     </div>
   </div>
 </template>
@@ -137,8 +230,33 @@
   }
 
   .timeline-col {
-    flex: 1;
-    min-width: 0;
+    flex: 1 1 0%;
+    min-width: 200px;
+  }
+
+  .panel-handle {
+    width: 6px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: var(--border);
+    position: relative;
+    transition: background 0.15s;
+    user-select: none;
+  }
+
+  .panel-handle::after {
+    content: '';
+    position: absolute;
+    inset: 0 2px;
+    background: transparent;
+    border-radius: 2px;
+    transition: background 0.15s;
+  }
+
+  .panel-handle:hover::after,
+  .panel-handle.resizing::after {
+    background: var(--primary);
+    opacity: 0.4;
   }
 
   .load-error {

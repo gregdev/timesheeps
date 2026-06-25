@@ -5,16 +5,25 @@
   import { api } from '../api'
   import { useDayStore } from '../stores/day'
   import { useSettingsStore } from '../stores/settings'
-  import type { SearchResults } from '../schemas'
+  import type { ActivityBlock, SearchResults } from '../schemas'
   import SearchDayTimeline from '../components/SearchDayTimeline.vue'
+  import SearchMatchItem from '../components/SearchMatchItem.vue'
+  import ProjectPickerModal from '../components/ProjectPickerModal.vue'
   import { useAppColour } from '../composables/useAppColour'
+  import { useEntryModal } from '../composables/useEntryModal'
+  import { useContextMenu } from '../composables/useContextMenu'
+  import { useTimeline } from '../composables/useTimeline'
 
   const route = useRoute()
   const router = useRouter()
   const dayStore = useDayStore()
   const settingsStore = useSettingsStore()
   const { appColour: appColor } = useAppColour()
+  const { pendingCreate, editingEntry } = useEntryModal()
+  const { open: openMenu } = useContextMenu()
+  const { isoToMinutes } = useTimeline()
 
+  const targetDate = ref<string | null>(null)
   const loading = ref(false)
   const results = ref<SearchResults | null>(null)
   const error = ref<string | null>(null)
@@ -103,15 +112,6 @@
     return format(parseISO(dateStr), 'EEEE, MMMM d, yyyy')
   }
 
-  function formatTimeRange(startIso: string, endIso: string): string {
-    const s = new Date(startIso)
-    const e = new Date(endIso)
-    const fmt = (d: Date) =>
-      `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-
-    return `${fmt(s)} – ${fmt(e)}`
-  }
-
   function minutesToTime(min: number): string {
     const h = Math.floor(min / 60)
     const m = min % 60
@@ -132,6 +132,94 @@
   async function goToDay(date: string) {
     await dayStore.loadDay(date)
     router.push('/')
+  }
+
+  // ── Context menu handlers for match items ─────────────────────────────────
+
+  function onTrackToProject(block: ActivityBlock) {
+    const date = block.startedAt.slice(0, 10)
+    targetDate.value = date
+
+    const startMinutes = Math.round(isoToMinutes(block.startedAt))
+    const endMinutes = Math.round(isoToMinutes(block.endedAt))
+
+    pendingCreate.value = {
+      startMinutes,
+      endMinutes,
+      note: block.appName,
+    }
+  }
+
+  async function onCreateIgnoreRule(appName: string) {
+    await settingsStore.createRule('app_name', appName)
+  }
+
+  // ── Context menu for window totals sidebar ────────────────────────────────
+
+  function onWsItemContextMenu(
+    e: MouseEvent,
+    item: { appName: string; windowTitle: string; totalSecs: number },
+  ) {
+    openMenu(e, [
+      {
+        label: 'Track to project…',
+        action: () => {
+          // Use the most recent matching day, or today as fallback
+          const matchingDay =
+            results.value?.days.find((d) =>
+              d.matchedBlocks.some(
+                (b) => b.appName === item.appName && b.windowTitle === item.windowTitle,
+              ),
+            )?.date ?? new Date().toISOString().slice(0, 10)
+
+          targetDate.value = matchingDay
+          pendingCreate.value = {
+            startMinutes: 9 * 60,
+            endMinutes: 10 * 60,
+            note: item.appName,
+          }
+        },
+      },
+      {
+        label: 'Create ignore rule',
+        action: async () => {
+          await settingsStore.createRule('app_name', item.appName)
+        },
+      },
+    ])
+  }
+
+  // ── Modal handlers ────────────────────────────────────────────────────────
+
+  async function onModalSave(
+    projectId: number,
+    startMinutes: number,
+    endMinutes: number,
+    note: string,
+  ) {
+    if (editingEntry.value) {
+      await dayStore.updateEntry(editingEntry.value.id, projectId, startMinutes, endMinutes, note)
+      editingEntry.value = null
+    } else if (pendingCreate.value) {
+      // Ensure the correct day is loaded
+      if (targetDate.value) {
+        await dayStore.loadDay(targetDate.value)
+        targetDate.value = null
+      }
+      await dayStore.createEntry(projectId, startMinutes, endMinutes, note)
+      pendingCreate.value = null
+    }
+  }
+
+  async function onModalDelete(id: number) {
+    await dayStore.deleteEntry(id)
+    editingEntry.value = null
+  }
+
+  function onModalCancel() {
+    pendingCreate.value = null
+    editingEntry.value = null
+    targetDate.value = null
   }
 </script>
 
@@ -191,16 +279,13 @@
           />
 
           <ul class="match-list">
-            <li v-for="block in day.matchedBlocks" :key="block.startedAt" class="match-item">
-              <span class="match-time">
-                {{ formatTimeRange(block.startedAt, block.endedAt) }}
-              </span>
-              <span class="match-app" :style="{ color: appColor(block.appName) }">
-                {{ block.appName }}
-              </span>
-              <span class="match-title">{{ block.windowTitle }}</span>
-              <span class="match-dur">{{ formatDuration(block.durationSecs) }}</span>
-            </li>
+            <SearchMatchItem
+              v-for="block in day.matchedBlocks"
+              :key="block.startedAt"
+              :block="block"
+              @track-to-project="onTrackToProject"
+              @create-ignore-rule="onCreateIgnoreRule"
+            />
           </ul>
         </div>
 
@@ -230,7 +315,12 @@
         <span class="ws-total">{{ formatDuration(totalMatchedSecs) }}</span>
       </div>
       <ul class="ws-list">
-        <li v-for="item in windowTotals" :key="item.appName + item.windowTitle" class="ws-item">
+        <li
+          v-for="item in windowTotals"
+          :key="item.appName + item.windowTitle"
+          class="ws-item"
+          @contextmenu="onWsItemContextMenu($event, item)"
+        >
           <div class="ws-bar-wrap">
             <div
               class="ws-bar"
@@ -252,6 +342,21 @@
         </li>
       </ul>
     </aside>
+
+    <!-- Project picker modal for Track to project… -->
+    <ProjectPickerModal
+      v-if="pendingCreate || editingEntry"
+      :initial-start="(pendingCreate?.startMinutes ?? editingEntry?.startMinutes)!"
+      :initial-end="(pendingCreate?.endMinutes ?? editingEntry?.endMinutes)!"
+      :initial-project-id="
+        (pendingCreate?.projectId ?? editingEntry?.projectId ?? null) as number | null
+      "
+      :initial-note="(pendingCreate?.note ?? editingEntry?.note) ?? ''"
+      :entry-id="editingEntry?.id ?? null"
+      @save="onModalSave"
+      @delete="onModalDelete"
+      @cancel="onModalCancel"
+    />
   </div>
 </template>
 
@@ -355,47 +460,6 @@
     list-style: none;
     margin: 0;
     padding: 0;
-  }
-
-  .match-item {
-    display: grid;
-    grid-template-columns: 110px auto 1fr auto;
-    align-items: center;
-    gap: 10px;
-    padding: 5px 8px;
-    border-radius: var(--radius);
-    font-size: 12px;
-    transition: background 0.12s;
-  }
-
-  .match-item:hover {
-    background: color-mix(in srgb, var(--border) 40%, transparent);
-  }
-
-  .match-time {
-    color: var(--text-muted);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .match-app {
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .match-title {
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .match-dur {
-    font-weight: 600;
-    color: var(--text);
-    white-space: nowrap;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
   }
 
   /* ── Note matches ────────────────────────────────────────────────────────── */

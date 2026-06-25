@@ -9,9 +9,11 @@ import {
   SettingsSchema,
   SuggestedEntrySchema,
   TimeEntrySchema,
+  TimerStateSchema,
   WindowSummaryItemSchema,
   type FilterRuleType,
   type Settings,
+  type TimerState,
 } from '../schemas'
 
 async function callArray<T>(
@@ -91,4 +93,12 @@ export const api = {
     callArray(SuggestedEntrySchema, 'get_suggested_entries_for_day', { date }),
 
   search: (query: string) => callOne(SearchResultsSchema, 'search', { query }),
+
+  // ── Timer ───────────────────────────────────────────────────────────────
+  startTimer: (projectId: number, note: string): Promise<TimerState> =>
+    callOne(TimerStateSchema, 'start_timer', { projectId, note }),
+  pauseTimer: (): Promise<TimerState> => callOne(TimerStateSchema, 'pause_timer'),
+  resumeTimer: (): Promise<TimerState> => callOne(TimerStateSchema, 'resume_timer'),
+  stopTimer: (): Promise<TimerState> => callOne(TimerStateSchema, 'stop_timer'),
+  getTimerState: (): Promise<TimerState> => callOne(TimerStateSchema, 'get_timer_state'),
 }

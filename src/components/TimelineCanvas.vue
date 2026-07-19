@@ -28,7 +28,9 @@
   const activityPct = computed(() => Math.round(splitRatio.value * 100))
 
   function onResizeStart(e: MouseEvent) {
-    if (e.button !== 0) {return}
+    if (e.button !== 0) {
+      return
+    }
 
     e.preventDefault()
     isResizing.value = true
@@ -39,18 +41,24 @@
   }
 
   function onResizeMove(e: MouseEvent) {
-    if (!scrollRef.value) {return}
+    if (!scrollRef.value) {
+      return
+    }
 
     const body = scrollRef.value.querySelector('.timeline-body') as HTMLElement
 
-    if (!body) {return}
+    if (!body) {
+      return
+    }
 
     const rect = body.getBoundingClientRect()
     const rulerW = 44 // .ruler-spacer width
     const handleW = 6 // .track-divider width
     const available = rect.width - rulerW - handleW
 
-    if (available <= 0) {return}
+    if (available <= 0) {
+      return
+    }
 
     let ratio = (e.clientX - rect.left - rulerW) / available
     ratio = Math.max(0.15, Math.min(0.85, ratio))
@@ -109,12 +117,23 @@
     startMinutes: number,
     endMinutes: number,
     note: string,
+    autoTrack: boolean,
   ) {
     if (editingEntry.value) {
       await dayStore.updateEntry(editingEntry.value.id, projectId, startMinutes, endMinutes, note)
       editingEntry.value = null
     } else if (pendingCreate.value) {
       await dayStore.createEntry(projectId, startMinutes, endMinutes, note)
+
+      // Create auto-track rule if toggle was enabled
+      if (autoTrack && pendingCreate.value.autoTrackAppName) {
+        await settingsStore.createMatchRule(
+          projectId,
+          'app_name',
+          pendingCreate.value.autoTrackAppName,
+        )
+      }
+
       pendingCreate.value = null
     }
   }
@@ -218,6 +237,8 @@
     :initial-project-id="editingEntry?.projectId ?? pendingCreate?.projectId ?? null"
     :initial-note="editingEntry?.note ?? pendingCreate?.note ?? ''"
     :entry-id="editingEntry?.id ?? null"
+    :auto-track-app-name="pendingCreate?.autoTrackAppName"
+    :initial-auto-track="pendingCreate?.autoTrackEnabled"
     @save="onModalSave"
     @delete="onModalDelete"
     @cancel="onModalCancel"

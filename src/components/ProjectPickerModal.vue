@@ -10,10 +10,19 @@
     initialProjectId: number | null
     initialNote: string
     entryId: number | null
+    autoTrackAppName?: string
+    initialAutoTrack?: boolean
   }>()
 
   const emit = defineEmits<{
-    (e: 'save', projectId: number, startMinutes: number, endMinutes: number, note: string): void
+    (
+      e: 'save',
+      projectId: number,
+      startMinutes: number,
+      endMinutes: number,
+      note: string,
+      autoTrack: boolean,
+    ): void
     (e: 'delete', id: number): void
     (e: 'cancel'): void
   }>()
@@ -30,6 +39,8 @@
   const showDropdown = ref(false)
   const highlightedIndex = ref(-1)
   const inputRef = ref<HTMLInputElement>()
+  const autoTrack = ref(props.initialAutoTrack ?? false)
+  const showAutoTrack = computed(() => !!props.autoTrackAppName)
 
   onMounted(() => {
     nextTick(() => inputRef.value?.focus())
@@ -161,7 +172,7 @@
       return
     }
 
-    emit('save', projectId, startMin.value, endMin.value, note.value)
+    emit('save', projectId, startMin.value, endMin.value, note.value, autoTrack.value)
   }
 
   function onDelete() {
@@ -246,6 +257,13 @@
         <div class="form-group">
           <label>Note (optional)</label>
           <textarea v-model="note" placeholder="What were you working on?" rows="2" />
+        </div>
+
+        <div v-if="showAutoTrack" class="form-group auto-track-row">
+          <label class="toggle-label">
+            <input v-model="autoTrack" type="checkbox" />
+            Auto-track: automatically match "{{ autoTrackAppName }}" to this project
+          </label>
         </div>
       </div>
 
@@ -441,5 +459,26 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .auto-track-row {
+    margin-top: var(--space-2);
+  }
+
+  .toggle-label {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    line-height: 1.4;
+  }
+
+  .toggle-label input[type='checkbox'] {
+    margin-top: 1px;
+    flex-shrink: 0;
+    accent-color: var(--primary);
   }
 </style>

@@ -6,6 +6,10 @@ export interface PendingCreate {
   endMinutes: number
   note: string
   projectId?: number | null
+  /** If set, the modal shows an auto-track toggle using this app name */
+  autoTrackAppName?: string
+  /** Whether the auto-track toggle starts checked */
+  autoTrackEnabled?: boolean
 }
 
 // Module-level singleton — shared across all component instances

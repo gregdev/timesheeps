@@ -94,6 +94,16 @@ export const api = {
 
   search: (query: string) => callOne(SearchResultsSchema, 'search', { query }),
 
+  deleteActivityBlock: (
+    startedAt: string,
+    endedAt: string,
+    appName: string,
+    windowTitle: string,
+  ) =>
+    invoke<number>('delete_activity_block', { startedAt, endedAt, appName, windowTitle }),
+  deleteActivityByAppTitle: (appName: string, windowTitle: string) =>
+    invoke<number>('delete_activity_by_app_title', { appName, windowTitle }),
+
   // ── Timer ───────────────────────────────────────────────────────────────
   startTimer: (projectId: number, note: string): Promise<TimerState> =>
     callOne(TimerStateSchema, 'start_timer', { projectId, note }),

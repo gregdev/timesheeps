@@ -154,6 +154,17 @@
     await settingsStore.createRule('app_name', appName)
   }
 
+  async function onDeleteBlock(block: ActivityBlock) {
+    await api.deleteActivityBlock(
+      block.startedAt,
+      block.endedAt,
+      block.appName,
+      block.windowTitle,
+    )
+    // Refresh search results
+    doSearch(query.value)
+  }
+
   // ── Context menu for window totals sidebar ────────────────────────────────
 
   function onWsItemContextMenu(
@@ -184,6 +195,14 @@
         label: 'Create ignore rule',
         action: async () => {
           await settingsStore.createRule('app_name', item.appName)
+        },
+      },
+      {
+        label: 'Delete all',
+        danger: true,
+        action: async () => {
+          await api.deleteActivityByAppTitle(item.appName, item.windowTitle)
+          doSearch(query.value)
         },
       },
     ])
@@ -285,6 +304,7 @@
               :block="block"
               @track-to-project="onTrackToProject"
               @create-ignore-rule="onCreateIgnoreRule"
+              @delete="onDeleteBlock"
             />
           </ul>
         </div>

@@ -2,6 +2,7 @@ mod activity;
 mod commands;
 mod db;
 mod models;
+mod nl_query;
 mod timer;
 
 use std::sync::Mutex;
@@ -143,6 +144,8 @@ pub fn run() {
             commands::activity::get_activity_for_day,
             commands::activity::get_window_summary_for_day,
             commands::activity::search,
+            commands::activity::delete_activity_block,
+            commands::activity::delete_activity_by_app_title,
             commands::projects::get_projects,
             commands::projects::create_project,
             commands::projects::update_project,

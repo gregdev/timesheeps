@@ -1119,3 +1119,38 @@ pub fn search(
 
     Ok(SearchResults { days, note_matches })
 }
+
+// ── Delete activity ─────────────────────────────────────────────────────────
+
+/// Delete all raw activity rows that match the given time range, app name, and
+/// window title. Used when the user right-clicks an ActivityBlock in search
+/// results and chooses Delete.
+pub fn delete_activity_block(
+    conn: &Connection,
+    started_at: &str,
+    ended_at: &str,
+    app_name: &str,
+    window_title: &str,
+) -> Result<usize> {
+    let count = conn.execute(
+        "DELETE FROM activity_raw
+         WHERE started_at = ?1 AND ended_at = ?2 AND app_name = ?3 AND window_title = ?4",
+        params![started_at, ended_at, app_name, window_title],
+    )?;
+    Ok(count)
+}
+
+/// Delete all raw activity rows for a given app_name and window_title across
+/// all dates. Used when the user right-clicks a window-totals sidebar item in
+/// search results and chooses Delete.
+pub fn delete_activity_by_app_title(
+    conn: &Connection,
+    app_name: &str,
+    window_title: &str,
+) -> Result<usize> {
+    let count = conn.execute(
+        "DELETE FROM activity_raw WHERE app_name = ?1 AND window_title = ?2",
+        params![app_name, window_title],
+    )?;
+    Ok(count)
+}

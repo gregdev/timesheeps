@@ -29,21 +29,38 @@
   )
 
   function onContextMenu(e: MouseEvent) {
+    const appName = props.block.appName
+    const startM = Math.round(startMin.value)
+    const endM = Math.round(endMin.value)
+
     openMenu(e, [
       {
         label: 'Track to project…',
         action: () => {
           pendingCreate.value = {
-            startMinutes: Math.round(startMin.value),
-            endMinutes: Math.round(endMin.value),
-            note: props.block.appName,
+            startMinutes: startM,
+            endMinutes: endM,
+            note: appName,
+            autoTrackAppName: appName,
+          }
+        },
+      },
+      {
+        label: 'Auto-track to project…',
+        action: () => {
+          pendingCreate.value = {
+            startMinutes: startM,
+            endMinutes: endM,
+            note: appName,
+            autoTrackAppName: appName,
+            autoTrackEnabled: true,
           }
         },
       },
       {
         label: 'Create ignore rule',
         action: async () => {
-          await settingsStore.createRule('app_name', props.block.appName)
+          await settingsStore.createRule('app_name', appName)
           await dayStore.loadDay(undefined, true)
         },
       },

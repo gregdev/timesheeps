@@ -8,6 +8,7 @@
   const emit = defineEmits<{
     (e: 'track-to-project', block: ActivityBlock): void
     (e: 'create-ignore-rule', appName: string): void
+    (e: 'delete', block: ActivityBlock): void
   }>()
 
   const { open: openMenu } = useContextMenu()
@@ -38,6 +39,11 @@
       {
         label: 'Create ignore rule',
         action: () => emit('create-ignore-rule', props.block.appName),
+      },
+      {
+        label: 'Delete',
+        danger: true,
+        action: () => emit('delete', props.block),
       },
     ])
   }

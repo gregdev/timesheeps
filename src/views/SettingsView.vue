@@ -380,6 +380,23 @@
               </Transition>
             </label>
           </div>
+          <div class="form-group form-group--inline">
+            <label class="checkbox-label">
+              <input
+                v-model="form.autoAcceptSuggested"
+                type="checkbox"
+                @change="trackField('autoAcceptSuggested')"
+              />
+              Auto-accept suggested time entries
+              <Transition name="check">
+                <span v-if="savedField === 'autoAcceptSuggested'" class="field-check">✓</span>
+              </Transition>
+            </label>
+            <p class="field-hint">
+              When a project match rule identifies your activity, automatically create a time entry
+              instead of showing a dashed suggestion that needs to be accepted.
+            </p>
+          </div>
 
           <div class="form-group form-group--full">
             <label>

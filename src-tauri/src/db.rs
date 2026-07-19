@@ -103,6 +103,7 @@ fn seed_default_settings(conn: &Connection) -> Result<()> {
         ("week_starts_on", "1".to_string()),
         ("pay_schedule_frequency", defaults.pay_schedule_frequency.clone()),
         ("pay_schedule_anchor", defaults.pay_schedule_anchor.clone()),
+        ("auto_accept_suggested", if defaults.auto_accept_suggested { "1" } else { "0" }.to_string()),
     ];
     for (key, val) in pairs {
         conn.execute(
@@ -727,6 +728,7 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         timeline_col_split_pct: get("timeline_col_split_pct", d.timeline_col_split_pct),
         layout_window_summary_width: get("layout_window_summary_width", d.layout_window_summary_width),
         layout_project_summary_width: get("layout_project_summary_width", d.layout_project_summary_width),
+        auto_accept_suggested: get_bool("auto_accept_suggested", d.auto_accept_suggested),
     })
 }
 
@@ -748,6 +750,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
         ("timeline_col_split_pct", s.timeline_col_split_pct.to_string()),
         ("layout_window_summary_width", s.layout_window_summary_width.to_string()),
         ("layout_project_summary_width", s.layout_project_summary_width.to_string()),
+        ("auto_accept_suggested", if s.auto_accept_suggested { "1" } else { "0" }.to_string()),
     ];
     for (key, val) in pairs {
         conn.execute(

@@ -181,6 +181,9 @@ pub struct Settings {
     pub layout_window_summary_width: i64,
     /// Width of the Project Time summary panel in pixels.
     pub layout_project_summary_width: i64,
+    /// When true, suggested entries from project match rules are automatically
+    /// converted to time entries without requiring manual acceptance.
+    pub auto_accept_suggested: bool,
 }
 
 impl Default for Settings {
@@ -202,6 +205,7 @@ impl Default for Settings {
             timeline_col_split_pct: 50,
             layout_window_summary_width: 220,
             layout_project_summary_width: 220,
+            auto_accept_suggested: false,
         }
     }
 }

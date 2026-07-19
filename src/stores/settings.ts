@@ -41,6 +41,7 @@ export const useSettingsStore = defineStore('settings', () => {
     timelineColSplitPct: 50,
     layoutWindowSummaryWidth: 220,
     layoutProjectSummaryWidth: 220,
+    autoAcceptSuggested: false,
   })
   const colourScheme = ref<ColourScheme>(
     (localStorage.getItem('colourScheme') as ColourScheme | null) ?? 'system',

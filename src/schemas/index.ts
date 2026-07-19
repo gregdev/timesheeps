@@ -70,6 +70,7 @@ export const SettingsSchema = z.object({
   timelineColSplitPct: z.number(),
   layoutWindowSummaryWidth: z.number(),
   layoutProjectSummaryWidth: z.number(),
+  autoAcceptSuggested: z.boolean(),
 })
 export type Settings = z.infer<typeof SettingsSchema>
 

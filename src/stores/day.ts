@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { format, addDays, subDays, parseISO } from 'date-fns'
 import { api } from '../api'
+import { useSettingsStore } from './settings'
 import type { ActivityBlock, SuggestedEntry, TimeEntry, WindowSummaryItem } from '../schemas'
 
 export const useDayStore = defineStore('day', () => {
@@ -35,6 +36,47 @@ export const useDayStore = defineStore('day', () => {
       windowSummary.value = winSummary
       rawSuggestions.value = suggestions
       loadError.value = null
+
+      // Auto-accept suggestions if enabled
+      const settingsStore = useSettingsStore()
+      if (settingsStore.settings.autoAcceptSuggested && suggestions.length > 0) {
+        const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes()
+        let created = false
+        for (const s of suggestions) {
+          const startMin = isoToMinutes(s.startedAt)
+          const endMin = isoToMinutes(s.endedAt)
+          if (endMin <= startMin) continue
+          // Only auto-create entries that don't overlap existing ones
+          const overlaps = entries.some(
+            (e) => e.startMinutes < endMin && e.endMinutes > startMin,
+          )
+          if (overlaps) continue
+          // Don't auto-create entries that end in the future (still in progress)
+          if (endMin > nowMinutes + 5) continue
+          try {
+            await api.createTimeEntry(
+              selectedDate.value,
+              s.projectId,
+              Math.round(startMin),
+              Math.round(endMin),
+              '',
+            )
+            created = true
+          } catch (e) {
+            console.error('[timesheeps] auto-accept failed:', e)
+          }
+        }
+        // Reload to pick up newly created entries
+        if (created) {
+          const [newEntries] = await Promise.all([
+            api.getTimeEntriesForDay(selectedDate.value),
+            api.getSuggestedEntriesForDay(selectedDate.value),
+          ])
+          timeEntries.value = newEntries
+          // Re-fetch suggestions (they'll be filtered by overlap on next loadDay)
+          rawSuggestions.value = suggestions
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       loadError.value = msg

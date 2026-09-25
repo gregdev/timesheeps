@@ -28,3 +28,16 @@ pub fn archive_project(id: i64, state: State<AppState>) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::archive_project(&conn, id).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn unarchive_project(id: i64, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::unarchive_project(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Deletes a project permanently. Its time entries and match rules cascade.
+#[tauri::command]
+pub fn delete_project(id: i64, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::delete_project(&conn, id).map_err(|e| e.to_string())
+}

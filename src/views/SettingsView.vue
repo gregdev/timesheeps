@@ -1,14 +1,24 @@
 <script setup lang="ts">
-  import { ref, watch, nextTick, onMounted } from 'vue'
+  import { computed, ref, watch, nextTick, onMounted } from 'vue'
+  import { useRouter } from 'vue-router'
   import { useSettingsStore } from '../stores/settings'
   import { useDayStore } from '../stores/day'
-  import ProjectList from '../components/ProjectList.vue'
+  import { useProjectsStore } from '../stores/projects'
   import FilterRuleList from '../components/FilterRuleList.vue'
   import type { Settings } from '../schemas'
   import { api } from '../api'
 
+  const router = useRouter()
   const settingsStore = useSettingsStore()
   const dayStore = useDayStore()
+  const projectsStore = useProjectsStore()
+
+  const projectCount = computed(() => projectsStore.active.length)
+  const ruleCount = computed(() => settingsStore.projectMatchRules.length)
+
+  function goToProjects() {
+    router.push('/projects')
+  }
 
   const form = ref<Settings>({
     ...settingsStore.settings,
@@ -265,9 +275,11 @@
             </div>
           </div>
         </section>
+      </div>
 
+      <div class="settings-col">
         <section class="settings-section">
-          <h2>Activity Tracking</h2>
+          <h2>Activity Recording</h2>
 
           <div class="settings-grid">
             <div class="form-group">
@@ -287,30 +299,6 @@
               </select>
 
               <p class="field-hint">Events shorter than this are hidden.</p>
-            </div>
-
-            <div class="form-group">
-              <label>
-                Window summary minimum
-                <Transition name="check">
-                  <span v-if="savedField === 'windowSummaryMinSecs'" class="field-check">✓</span>
-                </Transition>
-              </label>
-
-              <select
-                v-model.number="form.windowSummaryMinSecs"
-                @change="trackField('windowSummaryMinSecs')"
-              >
-                <option :value="30">30 seconds</option>
-                <option :value="60">1 minute</option>
-                <option :value="120">2 minutes</option>
-                <option :value="300">5 minutes</option>
-                <option :value="600">10 minutes</option>
-              </select>
-
-              <p class="field-hint">
-                Windows with less total time than this are hidden from the activity summary panel.
-              </p>
             </div>
 
             <div class="form-group">
@@ -367,6 +355,11 @@
               <p class="field-hint">Rounding increment for dragging and hover tooltip.</p>
             </div>
           </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Behaviour</h2>
+
           <div class="form-group form-group--inline">
             <label class="checkbox-label">
               <input
@@ -396,6 +389,36 @@
               When a project match rule identifies your activity, automatically create a time entry
               instead of showing a dashed suggestion that needs to be accepted.
             </p>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Window Activity Panel</h2>
+
+          <div class="settings-grid">
+            <div class="form-group">
+              <label>
+                Minimum row time
+                <Transition name="check">
+                  <span v-if="savedField === 'windowSummaryMinSecs'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <select
+                v-model.number="form.windowSummaryMinSecs"
+                @change="trackField('windowSummaryMinSecs')"
+              >
+                <option :value="30">30 seconds</option>
+                <option :value="60">1 minute</option>
+                <option :value="120">2 minutes</option>
+                <option :value="300">5 minutes</option>
+                <option :value="600">10 minutes</option>
+              </select>
+
+              <p class="field-hint">
+                Rows totalling less time than this are hidden from the Window Activity panel.
+              </p>
+            </div>
           </div>
 
           <div class="form-group form-group--full">
@@ -465,6 +488,31 @@
             </div>
           </div>
         </section>
+      </div>
+
+      <div class="settings-col">
+        <section class="settings-section">
+          <FilterRuleList />
+        </section>
+
+        <section class="settings-section settings-section--card">
+          <h2>
+            Projects
+            <span class="count-pill">
+              {{ projectCount }} {{ projectCount === 1 ? 'project' : 'projects' }} ·
+              {{ ruleCount }} {{ ruleCount === 1 ? 'rule' : 'rules' }}
+            </span>
+          </h2>
+
+          <p class="hint">
+            Time entries belong to projects, and auto-match rules turn recorded activity into
+            suggestions you can accept in one click.
+          </p>
+
+          <div>
+            <button class="btn-primary" @click="goToProjects">Manage projects →</button>
+          </div>
+        </section>
 
         <section class="settings-section">
           <h2>Claude AI</h2>
@@ -499,14 +547,57 @@
             <strong>Help → Troubleshoot → Enable Developer Mode</strong>
           </p>
         </section>
-      </div>
 
-      <section class="settings-section settings-section--card">
-        <ProjectList />
-      </section>
-      <section class="settings-section">
-        <FilterRuleList />
-      </section>
+        <section class="settings-section">
+          <h2>Microsoft 365 Calendar</h2>
+
+          <label>
+            Connect your Outlook / Microsoft 365 calendar to see meetings on your timeline.
+            You'll need an
+            <a
+              href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+              target="_blank"
+              rel="noopener"
+            >Azure AD app registration</a>
+            with the redirect URI
+            <code>http://localhost</code>
+            and the
+            <em>Calendars.Read</em>
+            permission.
+          </label>
+
+          <div v-if="settingsStore.m365Status.connected" class="claude-row" style="margin-top: 0.75rem">
+            <span class="saved-msg">
+              ✓ Connected as
+              <strong>{{ settingsStore.m365Status.accountName }}</strong>
+            </span>
+            <button class="btn-primary" @click="settingsStore.disconnectM365()">
+              Disconnect
+            </button>
+          </div>
+
+          <div v-else class="claude-row" style="margin-top: 0.75rem; flex-wrap: wrap; gap: 0.5rem">
+            <input
+              v-model="settingsStore.m365ClientId"
+              type="text"
+              placeholder="Azure AD Application (client) ID…"
+              style="width: 280px"
+            />
+            <button
+              class="btn-primary"
+              :disabled="settingsStore.m365Connecting || !settingsStore.m365ClientId.trim()"
+              @click="settingsStore.connectM365()"
+            >
+              {{ settingsStore.m365Connecting ? 'Connecting…' : 'Connect' }}
+            </button>
+          </div>
+
+          <p class="field-hint" style="margin-top: 0.5rem">
+            A browser window will open for you to sign in to your Microsoft account. After
+            authorising, you'll be redirected back and the app will store your tokens locally.
+          </p>
+        </section>
+      </div>
     </div>
   </div>
 </template>
@@ -550,15 +641,44 @@
     overflow-y: auto;
     padding: var(--space-5);
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: var(--space-12);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-8);
     align-items: start;
+  }
+
+  /* Three themed columns: display/schedule, recording, rules/integrations.
+     Collapse to two and then one as the window narrows. */
+  @media (width <= 1024px) {
+    .settings-scroll {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (width <= 760px) {
+    .settings-scroll {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .settings-col {
     display: flex;
     flex-direction: column;
     gap: var(--space-7);
+    min-width: 0;
+  }
+
+  .count-pill {
+    display: inline-flex;
+    align-items: center;
+    margin-left: var(--space-2);
+    padding: 2px var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    color: var(--text-muted);
+    vertical-align: middle;
+    white-space: nowrap;
   }
 
   .settings-section {
@@ -572,6 +692,17 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: var(--space-4);
+  }
+
+  .hint {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .hint a {
+    color: var(--primary);
+    font-weight: 500;
   }
 
   .settings-section h2,

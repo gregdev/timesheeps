@@ -2,6 +2,7 @@
   import type { ActivityBlock } from '../schemas'
   import { useContextMenu } from '../composables/useContextMenu'
   import { useAppColour } from '../composables/useAppColour'
+  import { formatSeconds, isoToLocalMinutes, minutesToClock } from '../composables/useFormat'
 
   const props = defineProps<{ block: ActivityBlock }>()
 
@@ -14,20 +15,11 @@
   const { open: openMenu } = useContextMenu()
   const { appColour: appColor } = useAppColour()
 
-  function formatDuration(secs: number): string {
-    const h = Math.floor(secs / 3600)
-    const m = Math.floor((secs % 3600) / 60)
-    if (h === 0) return `${m}m`
-    if (m === 0) return `${h}h`
-    return `${h}h ${m}m`
-  }
-
   function formatTimeRange(startIso: string, endIso: string): string {
-    const s = new Date(startIso)
-    const e = new Date(endIso)
-    const fmt = (d: Date) =>
-      `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-    return `${fmt(s)} – ${fmt(e)}`
+    const start = minutesToClock(Math.round(isoToLocalMinutes(startIso)))
+    const end = minutesToClock(Math.round(isoToLocalMinutes(endIso)))
+
+    return `${start} – ${end}`
   }
 
   function onContextMenu(e: MouseEvent) {
@@ -58,7 +50,7 @@
       {{ block.appName }}
     </span>
     <span class="match-title">{{ block.windowTitle }}</span>
-    <span class="match-dur">{{ formatDuration(block.durationSecs) }}</span>
+    <span class="match-dur">{{ formatSeconds(block.durationSecs) }}</span>
   </li>
 </template>
 

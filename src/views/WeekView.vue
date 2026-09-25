@@ -7,11 +7,11 @@
   import { useProjectsStore } from '../stores/projects'
   import { useDayStore } from '../stores/day'
   import { usePeriodGrid } from '../composables/usePeriodGrid'
+  import { localDateKey } from '../composables/useFormat'
   import type { PeriodDayData } from '../composables/usePeriodGrid'
   import PeriodNav from '../components/PeriodNav.vue'
   import PeriodGrid from '../components/PeriodGrid.vue'
   import PeriodSummary from '../components/PeriodSummary.vue'
-  import type { TimeEntry } from '../schemas'
 
   const settingsStore = useSettingsStore()
   const projectsStore = useProjectsStore()
@@ -25,7 +25,7 @@
   const weekStart = ref(startOfWeek(new Date(), { weekStartsOn: weekStartsOn.value }))
 
   const weekDays = computed(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart.value, i)))
-  const weekDayStrings = computed(() => weekDays.value.map((d) => format(d, 'yyyy-MM-dd')))
+  const weekDayStrings = computed(() => weekDays.value.map((d) => localDateKey(d)))
 
   const weekLabel = computed(() => {
     const start = weekDays.value[0]
@@ -43,7 +43,7 @@
   })
 
   const isCurrentWeek = computed(() => {
-    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    const todayStr = localDateKey(new Date())
     return weekDayStrings.value.includes(todayStr)
   })
 
@@ -74,6 +74,15 @@
 
   watch(weekDayStrings, loadWeek, { immediate: true })
 
+  // Changing "week starts on" should move the visible week, but only while the
+  // user is looking at the current one — otherwise it would yank them away from
+  // a week they deliberately navigated to.
+  watch(weekStartsOn, (dow) => {
+    if (isCurrentWeek.value) {
+      weekStart.value = startOfWeek(new Date(), { weekStartsOn: dow })
+    }
+  })
+
   function prevWeek() {
     weekStart.value = subWeeks(weekStart.value, 1)
   }
@@ -91,29 +100,15 @@
     router.push('/')
   }
 
-  const { projectDayMinutes, dayTotalMinutes, hasUnlogged, fmtMin } = usePeriodGrid(dayData)
+  const { projectDayMinutes, dayTotalMinutes, hasUnlogged, fmtMin, entriesInRange, usedProjectIds } =
+    usePeriodGrid(dayData)
 
   const weekProjects = computed(() => {
-    const usedIds = new Set<number>()
-
-    for (const data of dayData.value.values()) {
-      for (const entry of data.entries) {
-        usedIds.add(entry.projectId)
-      }
-    }
-
-    return projectsStore.projects.filter((p) => !p.archivedAt && usedIds.has(p.id))
+    const used = usedProjectIds()
+    return projectsStore.active.filter((p) => used.has(p.id))
   })
 
-  const allEntries = computed(() => {
-    const entries: TimeEntry[] = []
-
-    for (const data of dayData.value.values()) {
-      entries.push(...data.entries)
-    }
-
-    return entries
-  })
+  const allEntries = computed(() => entriesInRange())
 
   const gridColumns = '180px repeat(7, 1fr)'
 </script>

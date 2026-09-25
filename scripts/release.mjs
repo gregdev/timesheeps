@@ -11,6 +11,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const cargoPath = resolve(root, 'src-tauri/Cargo.toml')
 const cargo = readFileSync(cargoPath, 'utf8')
 const current = cargo.match(/\[package\][^[]*?version\s*=\s*"([^"]*)"/s)?.[1]
+
 if (!current) {
   console.error('Could not read version from Cargo.toml. Aborting.')
   process.exit(1)

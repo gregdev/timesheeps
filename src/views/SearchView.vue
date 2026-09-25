@@ -10,9 +10,16 @@
   import SearchMatchItem from '../components/SearchMatchItem.vue'
   import ProjectPickerModal from '../components/ProjectPickerModal.vue'
   import { useAppColour } from '../composables/useAppColour'
-  import { useEntryModal } from '../composables/useEntryModal'
+  import { useEntryModal, type EntryRange } from '../composables/useEntryModal'
   import { useContextMenu } from '../composables/useContextMenu'
   import { useTimeline } from '../composables/useTimeline'
+  import {
+    cleanWindowTitle,
+    formatMinutes,
+    formatSeconds,
+    localDateKey,
+    minutesToClock,
+  } from '../composables/useFormat'
 
   const route = useRoute()
   const router = useRouter()
@@ -78,6 +85,11 @@
     return [...map.values()].sort((a, b) => b.totalSecs - a.totalSecs)
   })
 
+  /** Bars are relative to the widest result, which is not necessarily the first. */
+  const maxWindowSecs = computed(() =>
+    windowTotals.value.reduce((max, i) => Math.max(max, i.totalSecs), 1),
+  )
+
   const totalMatchedSecs = computed(() => {
     if (!results.value) {
       return 0
@@ -94,39 +106,8 @@
     return results.value.days.reduce((s, d) => s + d.matchedBlocks.length, 0)
   })
 
-  function formatDuration(secs: number): string {
-    const h = Math.floor(secs / 3600)
-    const m = Math.floor((secs % 3600) / 60)
-
-    if (h === 0) {
-      return `${m}m`
-    }
-    if (m === 0) {
-      return `${h}h`
-    }
-
-    return `${h}h ${m}m`
-  }
-
   function formatDate(dateStr: string): string {
     return format(parseISO(dateStr), 'EEEE, MMMM d, yyyy')
-  }
-
-  function minutesToTime(min: number): string {
-    const h = Math.floor(min / 60)
-    const m = min % 60
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
-  }
-
-  function cleanTitle(appName: string, title: string): string {
-    const parts = title.split(' \u2014 ')
-
-    if (parts.length > 1 && parts[parts.length - 1].toLowerCase() === appName.toLowerCase()) {
-      parts.pop()
-    }
-
-    const cleaned = parts.join(' \u2014 ')
-    return cleaned.toLowerCase() === appName.toLowerCase() ? '' : cleaned
   }
 
   async function goToDay(date: string) {
@@ -137,8 +118,8 @@
   // ── Context menu handlers for match items ─────────────────────────────────
 
   function onTrackToProject(block: ActivityBlock) {
-    const date = block.startedAt.slice(0, 10)
-    targetDate.value = date
+    // `startedAt` is UTC — derive the *local* day the block belongs to.
+    targetDate.value = localDateKey(block.startedAt)
 
     const startMinutes = Math.round(isoToMinutes(block.startedAt))
     const endMinutes = Math.round(isoToMinutes(block.endedAt))
@@ -152,15 +133,12 @@
 
   async function onCreateIgnoreRule(appName: string) {
     await settingsStore.createRule('app_name', appName)
+    // Ignoring an app changes what the search returns, so re-run it.
+    doSearch(query.value)
   }
 
   async function onDeleteBlock(block: ActivityBlock) {
-    await api.deleteActivityBlock(
-      block.startedAt,
-      block.endedAt,
-      block.appName,
-      block.windowTitle,
-    )
+    await api.deleteActivityBlock(block.startedAt, block.endedAt, block.appName, block.windowTitle)
     // Refresh search results
     doSearch(query.value)
   }
@@ -175,18 +153,40 @@
       {
         label: 'Track to project…',
         action: () => {
-          // Use the most recent matching day, or today as fallback
-          const matchingDay =
-            results.value?.days.find((d) =>
-              d.matchedBlocks.some(
-                (b) => b.appName === item.appName && b.windowTitle === item.windowTitle,
-              ),
-            )?.date ?? new Date().toISOString().slice(0, 10)
+          // The sidebar's total is summed from one day's matched blocks for this
+          // app+title pair, so track that same day and those same blocks.
+          const day = results.value?.days.find((d) =>
+            d.matchedBlocks.some(
+              (b) => b.appName === item.appName && b.windowTitle === item.windowTitle,
+            ),
+          )
 
-          targetDate.value = matchingDay
+          if (!day) {
+            window.alert(`No matching activity to track for "${item.windowTitle}".`)
+            return
+          }
+
+          // Blocks are already merged into sessions, so each is one range — and they
+          // stay separate entries, never one span swallowing the gaps between them.
+          const ranges = day.matchedBlocks
+            .filter((b) => b.appName === item.appName && b.windowTitle === item.windowTitle)
+            .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+            .map((b) => ({
+              startMinutes: Math.round(isoToMinutes(b.startedAt)),
+              endMinutes: Math.round(isoToMinutes(b.endedAt)),
+            }))
+            .filter((r) => r.endMinutes > r.startMinutes)
+
+          if (ranges.length === 0) {
+            window.alert(`No sessions to track for "${item.windowTitle}".`)
+            return
+          }
+
+          targetDate.value = day.date
           pendingCreate.value = {
-            startMinutes: 9 * 60,
-            endMinutes: 10 * 60,
+            startMinutes: ranges[0].startMinutes,
+            endMinutes: ranges[0].endMinutes,
+            ranges,
             note: item.appName,
           }
         },
@@ -195,6 +195,7 @@
         label: 'Create ignore rule',
         action: async () => {
           await settingsStore.createRule('app_name', item.appName)
+          doSearch(query.value)
         },
       },
       {
@@ -212,12 +213,21 @@
 
   async function onModalSave(
     projectId: number,
-    startMinutes: number,
-    endMinutes: number,
+    ranges: EntryRange[],
     note: string,
+    // The modal always emits this; search results never offer auto-track.
+    _autoTrack: boolean,
   ) {
     if (editingEntry.value) {
-      await dayStore.updateEntry(editingEntry.value.id, projectId, startMinutes, endMinutes, note)
+      const [range] = ranges
+
+      await dayStore.updateEntry(
+        editingEntry.value.id,
+        projectId,
+        range.startMinutes,
+        range.endMinutes,
+        note,
+      )
       editingEntry.value = null
     } else if (pendingCreate.value) {
       // Ensure the correct day is loaded
@@ -225,7 +235,8 @@
         await dayStore.loadDay(targetDate.value)
         targetDate.value = null
       }
-      await dayStore.createEntry(projectId, startMinutes, endMinutes, note)
+
+      await dayStore.createEntries(projectId, ranges, note)
       pendingCreate.value = null
     }
   }
@@ -240,6 +251,33 @@
     editingEntry.value = null
     targetDate.value = null
   }
+
+  /** Whichever entry the picker is editing/creating — it covers both flows. */
+  const modalTarget = computed(() => pendingCreate.value ?? editingEntry.value)
+
+  /** Search flows always cover a single range, never several sessions. */
+  const modalRanges = computed<EntryRange[]>(() => {
+    if (editingEntry.value) {
+      return [
+        {
+          startMinutes: editingEntry.value.startMinutes,
+          endMinutes: editingEntry.value.endMinutes,
+        },
+      ]
+    }
+
+    const pending = pendingCreate.value
+
+    if (!pending) {
+      return []
+    }
+
+    return pending.ranges?.length
+      ? pending.ranges
+      : [{ startMinutes: pending.startMinutes, endMinutes: pending.endMinutes }]
+  })
+
+  const modalProjectId = computed<number | null>(() => modalTarget.value?.projectId ?? null)
 </script>
 
 <template>
@@ -256,7 +294,7 @@
             {{ totalResultCount }} match{{ totalResultCount === 1 ? '' : 'es' }}
           </span>
           <span class="search-sep">·</span>
-          <span class="search-total">{{ formatDuration(totalMatchedSecs) }} total</span>
+          <span class="search-total">{{ formatSeconds(totalMatchedSecs) }} total</span>
           <template v-if="results.noteMatches.length > 0">
             <span class="search-sep">·</span>
             <span class="search-notes">
@@ -285,7 +323,7 @@
               {{ day.matchedBlocks.length }}
               match{{ day.matchedBlocks.length === 1 ? '' : 'es' }}
               ·
-              {{ formatDuration(day.totalMatchedSecs) }}
+              {{ formatSeconds(day.totalMatchedSecs) }}
             </span>
             <button class="day-link" @click="goToDay(day.date)">View day →</button>
           </div>
@@ -316,11 +354,11 @@
             <li v-for="entry in results.noteMatches" :key="entry.id" class="note-item">
               <span class="note-date">{{ entry.date }}</span>
               <span class="note-time">
-                {{ minutesToTime(entry.startMinutes) }} – {{ minutesToTime(entry.endMinutes) }}
+                {{ minutesToClock(entry.startMinutes) }} – {{ minutesToClock(entry.endMinutes) }}
               </span>
               <span class="note-text">{{ entry.note }}</span>
               <span class="note-dur">
-                {{ formatDuration((entry.endMinutes - entry.startMinutes) * 60) }}
+                {{ formatMinutes(entry.endMinutes - entry.startMinutes) }}
               </span>
             </li>
           </ul>
@@ -332,20 +370,21 @@
     <aside v-if="results && windowTotals.length > 0" class="ws-sidebar">
       <div class="ws-header">
         <span class="ws-title">Matched Windows</span>
-        <span class="ws-total">{{ formatDuration(totalMatchedSecs) }}</span>
+        <span class="ws-total">{{ formatSeconds(totalMatchedSecs) }}</span>
       </div>
       <ul class="ws-list">
         <li
           v-for="item in windowTotals"
           :key="item.appName + item.windowTitle"
           class="ws-item"
+          data-tooltip="Right-click for actions"
           @contextmenu="onWsItemContextMenu($event, item)"
         >
           <div class="ws-bar-wrap">
             <div
               class="ws-bar"
               :style="{
-                width: (item.totalSecs / (windowTotals[0]?.totalSecs || 1)) * 100 + '%',
+                width: (item.totalSecs / maxWindowSecs) * 100 + '%',
                 background: appColor(item.appName),
               }"
             />
@@ -354,24 +393,21 @@
             <span class="ws-app" :style="{ color: appColor(item.appName) }">
               {{ item.appName }}
             </span>
-            <span v-if="cleanTitle(item.appName, item.windowTitle)" class="ws-window">
-              {{ cleanTitle(item.appName, item.windowTitle) }}
+            <span v-if="cleanWindowTitle(item.appName, item.windowTitle)" class="ws-window">
+              {{ cleanWindowTitle(item.appName, item.windowTitle) }}
             </span>
           </div>
-          <span class="ws-dur">{{ formatDuration(item.totalSecs) }}</span>
+          <span class="ws-dur">{{ formatSeconds(item.totalSecs) }}</span>
         </li>
       </ul>
     </aside>
 
     <!-- Project picker modal for Track to project… -->
     <ProjectPickerModal
-      v-if="pendingCreate || editingEntry"
-      :initial-start="(pendingCreate?.startMinutes ?? editingEntry?.startMinutes)!"
-      :initial-end="(pendingCreate?.endMinutes ?? editingEntry?.endMinutes)!"
-      :initial-project-id="
-        (pendingCreate?.projectId ?? editingEntry?.projectId ?? null) as number | null
-      "
-      :initial-note="(pendingCreate?.note ?? editingEntry?.note) ?? ''"
+      v-if="modalTarget"
+      :initial-ranges="modalRanges"
+      :initial-project-id="modalProjectId"
+      :initial-note="modalTarget.note"
       :entry-id="editingEntry?.id ?? null"
       @save="onModalSave"
       @delete="onModalDelete"

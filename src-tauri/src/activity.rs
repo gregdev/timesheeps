@@ -70,7 +70,7 @@ fn poll_once(app: &AppHandle, state: &Arc<Mutex<PollerState>>) {
 }
 
 fn handle_active(app: &AppHandle, state: &Arc<Mutex<PollerState>>, _settings: &Settings) {
-    let Some((new_app, new_title, new_window_id)) = get_foreground_window_info() else {
+    let Some((new_app, new_title, new_window_id, exe_path)) = get_foreground_window_info() else {
         return;
     };
 
@@ -103,7 +103,7 @@ fn handle_active(app: &AppHandle, state: &Arc<Mutex<PollerState>>, _settings: &S
         s.current_app = new_app.clone();
         s.current_title = new_title.clone();
         s.current_window_id = new_window_id;
-        s.current_row_id = start_session(app, &new_app, &new_title, new_window_id, &now);
+        s.current_row_id = start_session(app, &new_app, &new_title, new_window_id, &exe_path, &now);
     } else {
         // Same window — just extend the existing row's ended_at.
         if new_title != s.current_title {
@@ -146,11 +146,12 @@ fn start_session(
     app_name: &str,
     window_title: &str,
     window_id: u64,
+    exe_path: &str,
     now: &chrono::DateTime<chrono::Utc>,
 ) -> Option<i64> {
     let db_state = app.state::<crate::AppState>();
     let db_guard = db_state.db.lock().unwrap();
-    match db::insert_activity(&db_guard, app_name, window_title, window_id, now, now) {
+    match db::insert_activity(&db_guard, app_name, window_title, window_id, exe_path, now, now) {
         Ok(id) => {
             drop(db_guard);
             let _ = app.emit("activity-updated", ());
@@ -177,7 +178,7 @@ fn extend_session(
 // ── Platform-specific: get foreground window ──────────────────────────────────
 
 #[cfg(target_os = "windows")]
-fn get_foreground_window_info() -> Option<(String, String, u64)> {
+fn get_foreground_window_info() -> Option<(String, String, u64, String)> {
     use windows::Win32::{
         Foundation::CloseHandle,
         System::ProcessStatus::GetModuleFileNameExW,
@@ -203,48 +204,52 @@ fn get_foreground_window_info() -> Option<(String, String, u64)> {
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
         if pid == 0 {
-            return Some((String::from("unknown"), title, hwnd.0 as usize as u64));
+            return Some((String::from("unknown"), title, hwnd.0 as usize as u64, String::new()));
         }
 
         let process = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(h) => h,
-            Err(_) => return Some((String::from("unknown"), title, hwnd.0 as usize as u64)),
+            Err(_) => {
+                return Some((String::from("unknown"), title, hwnd.0 as usize as u64, String::new()))
+            }
         };
 
         let mut name_buf = [0u16; 512];
         let name_len = GetModuleFileNameExW(process, None, &mut name_buf);
         let _ = CloseHandle(process);
 
-        let app_name = if name_len > 0 {
+        let (app_name, full_path) = if name_len > 0 {
             let full_path = String::from_utf16_lossy(&name_buf[..name_len as usize]);
-            std::path::Path::new(&full_path)
+            let stem = std::path::Path::new(&full_path)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
-                .to_string()
+                .to_string();
+            (stem, full_path)
         } else {
-            String::from("unknown")
+            (String::from("unknown"), String::new())
         };
 
-        Some((app_name, title, hwnd.0 as usize as u64))
+        Some((app_name, title, hwnd.0 as usize as u64, full_path))
     }
 }
 
 #[cfg(target_os = "macos")]
-fn get_foreground_window_info() -> Option<(String, String, u64)> {
+fn get_foreground_window_info() -> Option<(String, String, u64, String)> {
     use std::hash::{DefaultHasher, Hash, Hasher};
     match active_win_pos_rs::get_active_window() {
         Ok(w) => {
             let mut hasher = DefaultHasher::new();
             w.window_id.hash(&mut hasher);
-            Some((w.app_name, w.title, hasher.finish()))
+            // The macOS backend does not expose the executable path.
+            Some((w.app_name, w.title, hasher.finish(), String::new()))
         }
         Err(_) => None,
     }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn get_foreground_window_info() -> Option<(String, String, u64)> {
+fn get_foreground_window_info() -> Option<(String, String, u64, String)> {
     None
 }
 

@@ -4,7 +4,7 @@
   import { useDayStore } from '../stores/day'
   import { useSettingsStore } from '../stores/settings'
   import { useTimeline } from '../composables/useTimeline'
-  import { useEntryModal } from '../composables/useEntryModal'
+  import { useEntryModal, type EntryRange } from '../composables/useEntryModal'
   import { useContextMenu } from '../composables/useContextMenu'
   import TimeRuler from './TimeRuler.vue'
   import ActivityBlockItem from './ActivityBlockItem.vue'
@@ -15,7 +15,7 @@
 
   const dayStore = useDayStore()
   const settingsStore = useSettingsStore()
-  const { totalHeight, hours, minuteToY } = useTimeline()
+  const { totalHeight, hours, minuteToY, isoToMinutes } = useTimeline()
   const { pendingCreate, editingEntry } = useEntryModal()
   const { open: openMenu } = useContextMenu()
 
@@ -26,6 +26,17 @@
   const isResizing = ref(false)
 
   const activityPct = computed(() => Math.round(splitRatio.value * 100))
+
+  // Settings load asynchronously, so the persisted split can arrive after this
+  // component mounts (and can also be changed from the Settings page).
+  watch(
+    () => settingsStore.settings.timelineColSplitPct,
+    (pct) => {
+      if (!isResizing.value) {
+        splitRatio.value = pct / 100
+      }
+    },
+  )
 
   function onResizeStart(e: MouseEvent) {
     if (e.button !== 0) {
@@ -114,28 +125,76 @@
 
   async function onModalSave(
     projectId: number,
-    startMinutes: number,
-    endMinutes: number,
+    ranges: EntryRange[],
     note: string,
     autoTrack: boolean,
   ) {
     if (editingEntry.value) {
-      await dayStore.updateEntry(editingEntry.value.id, projectId, startMinutes, endMinutes, note)
+      // Editing always targets one existing entry, so only one range can apply.
+      const [range] = ranges
+
+      await dayStore.updateEntry(
+        editingEntry.value.id,
+        projectId,
+        range.startMinutes,
+        range.endMinutes,
+        note,
+      )
       editingEntry.value = null
     } else if (pendingCreate.value) {
-      await dayStore.createEntry(projectId, startMinutes, endMinutes, note)
+      await dayStore.createEntries(projectId, ranges, note)
 
       // Create auto-track rule if toggle was enabled
       if (autoTrack && pendingCreate.value.autoTrackAppName) {
-        await settingsStore.createMatchRule(
-          projectId,
-          'app_name',
-          pendingCreate.value.autoTrackAppName,
-        )
+        await createAutoTrackRule(projectId, pendingCreate.value.autoTrackAppName)
       }
 
       pendingCreate.value = null
     }
+  }
+
+  /**
+   * Add an "app name is X" rule for the project, but never silently stack up a
+   * second rule when another project already claims that app — the older rule
+   * would keep winning and the new one would look broken.
+   */
+  async function createAutoTrackRule(projectId: number, appName: string) {
+    const conflict = settingsStore.findAppNameConflict(appName, projectId)
+
+    if (!conflict) {
+      await settingsStore.createMatchRule(projectId, appName, buildAppNameConditions(appName))
+      return
+    }
+
+    const choice = window.confirm(
+      `"${appName}" is already matched to a different project by the rule "${conflict.name}".\n\n` +
+        `OK — reassign that rule to this project instead.\n` +
+        `Cancel — keep it and add this project's rule below it in priority order.`,
+    )
+
+    if (choice) {
+      await settingsStore.updateMatchRule(
+        conflict.id,
+        conflict.name,
+        buildAppNameConditions(appName),
+      )
+      await settingsStore.reorderMatchRules([
+        conflict.id,
+        ...settingsStore.orderedMatchRules.map((r) => r.id).filter((id) => id !== conflict.id),
+      ])
+    } else {
+      // Give the new rule the project it was actually created for, then trust
+      // priority to resolve the overlap.
+      await settingsStore.createMatchRule(projectId, appName, buildAppNameConditions(appName))
+    }
+
+    await settingsStore.refreshRuleStats()
+  }
+
+  function buildAppNameConditions(appName: string) {
+    return [
+      { field: 'app_name' as const, operator: 'equals' as const, value: appName, negate: false },
+    ]
   }
 
   async function onModalDelete(id: number) {
@@ -147,6 +206,36 @@
     pendingCreate.value = null
     editingEntry.value = null
   }
+
+  /** Whichever entry the picker is editing/creating — it covers both flows. */
+  const modalTarget = computed(() => pendingCreate.value ?? editingEntry.value)
+
+  /**
+   * The ranges the picker will save. A Window Activity row can cover several
+   * separate sessions; every other entry point is a single range.
+   */
+  const modalRanges = computed<EntryRange[]>(() => {
+    if (editingEntry.value) {
+      return [
+        {
+          startMinutes: editingEntry.value.startMinutes,
+          endMinutes: editingEntry.value.endMinutes,
+        },
+      ]
+    }
+
+    const pending = pendingCreate.value
+
+    if (!pending) {
+      return []
+    }
+
+    return pending.ranges?.length
+      ? pending.ranges
+      : [{ startMinutes: pending.startMinutes, endMinutes: pending.endMinutes }]
+  })
+
+  const modalProjectId = computed<number | null>(() => modalTarget.value?.projectId ?? null)
 
   onMounted(() => {
     // Scroll to 8am by default
@@ -205,6 +294,25 @@
               :block="block"
             />
           </TransitionGroup>
+
+          <!-- Calendar event markers -->
+          <div
+            v-for="event in dayStore.calendarEvents"
+            :key="event.startAt"
+            class="calendar-event-marker"
+            :style="{
+              top: minuteToY(isoToMinutes(event.startAt)) + 'px',
+              height:
+                Math.max(
+                  4,
+                  minuteToY(isoToMinutes(event.endAt)) - minuteToY(isoToMinutes(event.startAt)),
+                ) + 'px',
+            }"
+            :title="`${event.subject}${event.location ? ' @ ' + event.location : ''}${event.isTeamsMeeting ? ' (Teams)' : ''}`"
+          >
+            <span class="cal-event-label">{{ event.subject }}</span>
+          </div>
+
           <div v-if="!dayStore.loading && dayStore.activityBlocks.length === 0" class="empty-track">
             No activity recorded
           </div>
@@ -231,11 +339,10 @@
   </div>
 
   <ProjectPickerModal
-    v-if="pendingCreate || editingEntry"
-    :initial-start="(pendingCreate ?? editingEntry)!.startMinutes"
-    :initial-end="(pendingCreate ?? editingEntry)!.endMinutes"
-    :initial-project-id="editingEntry?.projectId ?? pendingCreate?.projectId ?? null"
-    :initial-note="editingEntry?.note ?? pendingCreate?.note ?? ''"
+    v-if="modalTarget"
+    :initial-ranges="modalRanges"
+    :initial-project-id="modalProjectId"
+    :initial-note="modalTarget.note"
     :entry-id="editingEntry?.id ?? null"
     :auto-track-app-name="pendingCreate?.autoTrackAppName"
     :initial-auto-track="pendingCreate?.autoTrackEnabled"
@@ -353,5 +460,43 @@
     font-size: 12px;
     color: var(--text-faint);
     white-space: nowrap;
+  }
+
+  .calendar-event-marker {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    background: color-mix(in srgb, #3b82f6 25%, transparent);
+    border-left: 3px solid #3b82f6;
+    border-radius: 2px;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 2;
+    min-height: 4px;
+  }
+
+  .cal-event-label {
+    font-size: 10px;
+    color: #1d4ed8;
+    padding: 0 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    line-height: 1.3;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .cal-event-label {
+      color: #93c5fd;
+    }
+  }
+
+  html[data-theme='dark'] .cal-event-label {
+    color: #93c5fd;
+  }
+
+  html[data-theme='light'] .cal-event-label {
+    color: #1d4ed8;
   }
 </style>

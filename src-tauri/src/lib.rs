@@ -1,11 +1,14 @@
 mod activity;
+mod appicon;
+mod calendar;
 mod commands;
 mod db;
+mod matcher;
 mod models;
 mod nl_query;
 mod timer;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -14,7 +17,7 @@ use tauri::{
 use tauri_plugin_autostart::MacosLauncher;
 
 pub struct AppState {
-    pub db: Mutex<rusqlite::Connection>,
+    pub db: Arc<Mutex<rusqlite::Connection>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,7 +46,7 @@ pub fn run() {
             }
 
             app.manage(AppState {
-                db: Mutex::new(conn),
+                db: Arc::new(Mutex::new(conn)),
             });
 
             // Initialise timer state
@@ -86,11 +89,12 @@ pub fn run() {
                         if let Some(win) = app.get_webview_window("main") {
                             // Navigate to timer popup view
                             let _ = win.eval("window.location.replace('/timer-popup')");
-                            // Resize to compact popup size
-                            let _ = win.set_size(Size::Logical(LogicalSize::new(280.0, 320.0)));
+                            // Resize to compact popup size (tall enough for the
+                            // "Open full app" footer button)
+                            let _ = win.set_size(Size::Logical(LogicalSize::new(280.0, 364.0)));
                             // Position near the click (tray icon location)
                             let x = (position.x - 280.0).max(0.0);
-                            let y = (position.y - 320.0 - 40.0).max(0.0);
+                            let y = (position.y - 364.0 - 40.0).max(0.0);
                             let _ = win.set_position(PhysicalPosition::new(x, y));
                             let _ = win.show();
                             let _ = win.set_focus();
@@ -146,10 +150,16 @@ pub fn run() {
             commands::activity::search,
             commands::activity::delete_activity_block,
             commands::activity::delete_activity_by_app_title,
+            commands::calendar::start_m365_login,
+            commands::calendar::get_m365_status,
+            commands::calendar::get_calendar_events,
+            commands::calendar::disconnect_m365,
             commands::projects::get_projects,
             commands::projects::create_project,
             commands::projects::update_project,
             commands::projects::archive_project,
+            commands::projects::unarchive_project,
+            commands::projects::delete_project,
             commands::time_entries::get_time_entries_for_day,
             commands::time_entries::create_time_entry,
             commands::time_entries::update_time_entry,
@@ -163,8 +173,13 @@ pub fn run() {
             commands::filter_rules::delete_filter_rule,
             commands::project_match_rules::get_project_match_rules,
             commands::project_match_rules::create_project_match_rule,
+            commands::project_match_rules::update_project_match_rule,
             commands::project_match_rules::delete_project_match_rule,
+            commands::project_match_rules::reorder_project_match_rules,
             commands::project_match_rules::get_suggested_entries_for_day,
+            commands::project_match_rules::get_rule_stats,
+            commands::project_match_rules::get_known_apps,
+            commands::apps::get_app_icon,
             commands::permissions::check_screen_recording_permission,
             commands::permissions::request_screen_recording_permission,
             commands::timer::start_timer,
@@ -173,6 +188,7 @@ pub fn run() {
             commands::timer::stop_timer,
             commands::timer::get_timer_state,
             commands::window::hide_main_window,
+            commands::window::show_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running timesheeps");

@@ -47,5 +47,32 @@ export const useProjectsStore = defineStore('projects', () => {
     }
   }
 
-  return { projects, active, roots, load, byId, childrenOf, create, update, archive }
+  async function unarchive(id: number) {
+    await api.unarchiveProject(id)
+    const idx = projects.value.findIndex((p) => p.id === id)
+
+    if (idx >= 0) {
+      projects.value[idx] = { ...projects.value[idx], archivedAt: null }
+    }
+  }
+
+  /** Permanently deletes a project; its time entries and match rules go with it. */
+  async function remove(id: number) {
+    await api.deleteProject(id)
+    projects.value = projects.value.filter((p) => p.id !== id)
+  }
+
+  return {
+    projects,
+    active,
+    roots,
+    load,
+    byId,
+    childrenOf,
+    create,
+    update,
+    archive,
+    unarchive,
+    remove,
+  }
 })

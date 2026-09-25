@@ -64,6 +64,20 @@
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
       return
     }
+
+    if (e.key === '/') {
+      e.preventDefault()
+      searchInput.value?.focus()
+      searchInput.value?.select()
+      return
+    }
+
+    // Day navigation only makes sense on the timeline — elsewhere it would
+    // silently move the day the Timeline shows out from under the user.
+    if (route.path !== '/') {
+      return
+    }
+
     if (e.key === 'ArrowLeft') {
       e.preventDefault()
       dayStore.prevDay()
@@ -72,14 +86,11 @@
       dayStore.nextDay()
     } else if (e.key === 't' || e.key === 'T') {
       dayStore.goToday()
-    } else if (e.key === '/') {
-      e.preventDefault()
-      searchInput.value?.focus()
-      searchInput.value?.select()
     }
   }
 
   let unlistenFocus: (() => void) | null = null
+  let unlistenIdle: (() => void) | null = null
 
   onMounted(async () => {
     // ── Full init for main window ───────────────────────────────────────
@@ -98,8 +109,8 @@
         .catch((e: unknown) => console.error('[timesheeps] settings load failed:', e)),
     ])
     await dayStore.loadDay()
-    timerStore.init()
-    listen<IdleReturnEvent>('idle-return', (event) => {
+    await timerStore.init()
+    unlistenIdle = await listen<IdleReturnEvent>('idle-return', (event) => {
       idleEvent.value = event.payload
     })
   })
@@ -107,6 +118,7 @@
   onUnmounted(() => {
     window.removeEventListener('keydown', onKeyDown)
     unlistenFocus?.()
+    unlistenIdle?.()
     timerStore.destroy()
   })
 </script>
@@ -129,6 +141,10 @@
           :class="{ active: route.path === '/pay-period' }"
         >
           Pay Period
+        </RouterLink>
+
+        <RouterLink to="/projects" class="nav-link" :class="{ active: route.path === '/projects' }">
+          Projects
         </RouterLink>
 
         <RouterLink to="/settings" class="nav-link" :class="{ active: route.path === '/settings' }">

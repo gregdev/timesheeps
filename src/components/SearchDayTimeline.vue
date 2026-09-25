@@ -2,6 +2,7 @@
   import { computed } from 'vue'
   import type { ActivityBlock } from '../schemas'
   import { useAppColour } from '../composables/useAppColour'
+  import { isoToLocalMinutes } from '../composables/useFormat'
 
   const { appColour: appColor } = useAppColour()
 
@@ -15,19 +16,14 @@
   const startMin = computed(() => props.startHour * 60)
   const totalMin = computed(() => (props.endHour - props.startHour) * 60)
 
-  function isoToMin(iso: string): number {
-    const d = new Date(iso)
-    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60
-  }
-
   function leftPct(iso: string): number {
-    const min = isoToMin(iso)
+    const min = isoToLocalMinutes(iso)
     return Math.max(0, Math.min(100, ((min - startMin.value) / totalMin.value) * 100))
   }
 
   function widthPct(startIso: string, endIso: string): number {
-    const s = isoToMin(startIso)
-    const e = isoToMin(endIso)
+    const s = isoToLocalMinutes(startIso)
+    const e = isoToLocalMinutes(endIso)
     const left = leftPct(startIso)
     return Math.max(0.3, Math.min(100 - left, ((e - s) / totalMin.value) * 100))
   }

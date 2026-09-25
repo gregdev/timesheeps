@@ -7,6 +7,7 @@ const WeekView = () => import('../views/WeekView.vue')
 const SearchView = () => import('../views/SearchView.vue')
 const PayPeriodView = () => import('../views/PayPeriodView.vue')
 const TimerPopupView = () => import('../views/TimerPopupView.vue')
+const ProjectsView = () => import('../views/ProjectsView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -14,6 +15,7 @@ export const router = createRouter({
     { path: '/', component: TimelineView },
     { path: '/week', component: WeekView },
     { path: '/pay-period', component: PayPeriodView },
+    { path: '/projects', component: ProjectsView },
     { path: '/settings', component: SettingsView },
     { path: '/about', component: AboutView },
     { path: '/search', component: SearchView },

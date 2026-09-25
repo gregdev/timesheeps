@@ -1,62 +1,15 @@
 <script setup lang="ts">
   import { computed } from 'vue'
   import { useDayStore } from '../stores/day'
-  import { useProjectsStore } from '../stores/projects'
   import { useTimeline } from '../composables/useTimeline'
+  import { useProjectGroups } from '../composables/useProjectGroups'
 
   const dayStore = useDayStore()
-  const projectsStore = useProjectsStore()
   const { formatDuration } = useTimeline()
 
-  const groups = computed(() => {
-    type Group = {
-      project: NonNullable<ReturnType<typeof projectsStore.byId>>
-      ownMins: number
-      totalMins: number
-      children: { project: NonNullable<ReturnType<typeof projectsStore.byId>>; mins: number }[]
-    }
-    const map = new Map<number, Group>()
-
-    for (const [projectId, mins] of dayStore.summary.entries()) {
-      const project = projectsStore.byId(projectId)
-
-      if (!project) {
-        continue
-      }
-
-      if (project.parentId !== null && project.parentId !== undefined) {
-        const parent = projectsStore.byId(project.parentId)
-
-        if (parent) {
-          if (!map.has(parent.id)) {
-            map.set(parent.id, { project: parent, ownMins: 0, totalMins: 0, children: [] })
-          }
-
-          map.get(parent.id)!.children.push({ project, mins })
-        } else {
-          // Orphan child (parent archived) — show standalone
-          map.set(project.id, { project, ownMins: mins, totalMins: mins, children: [] })
-        }
-      } else {
-        if (!map.has(project.id)) {
-          map.set(project.id, { project, ownMins: mins, totalMins: 0, children: [] })
-        } else {
-          map.get(project.id)!.ownMins = mins
-        }
-      }
-    }
-
-    return [...map.values()]
-      .map((g) => ({
-        ...g,
-        totalMins: g.ownMins + g.children.reduce((s, c) => s + c.mins, 0),
-        children: [...g.children].sort((a, b) => b.mins - a.mins),
-      }))
-      .sort((a, b) => b.totalMins - a.totalMins)
-  })
-
-  const totalMins = computed(() => groups.value.reduce((s: number, g) => s + g.totalMins, 0))
-  const maxMins = computed(() => groups.value[0]?.totalMins ?? 1)
+  const { groups, totalMins, maxMins } = useProjectGroups(
+    computed(() => dayStore.summary),
+  )
 </script>
 
 <template>

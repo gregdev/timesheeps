@@ -2,6 +2,7 @@
   import { ref, computed, onMounted, onUnmounted } from 'vue'
   import { useTimerStore } from '../stores/timer'
   import { useProjectsStore } from '../stores/projects'
+  import { formatElapsed } from '../composables/useFormat'
 
   const timer = useTimerStore()
   const projectsStore = useProjectsStore()
@@ -14,12 +15,7 @@
   const activeProjects = computed(() => projectsStore.projects.filter((p) => !p.archivedAt))
 
   function toggleExpand() {
-    if (timer.isActive) {
-      // If already running, just toggle
-      expanded.value = !expanded.value
-    } else {
-      expanded.value = !expanded.value
-    }
+    expanded.value = !expanded.value
   }
 
   async function handleStart() {
@@ -43,19 +39,6 @@
   async function handleStop() {
     await timer.stop()
     note.value = ''
-  }
-
-  function formatMs(ms: number): string {
-    const totalSeconds = Math.floor(ms / 1000)
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-
-    if (hours > 0) {
-      return `${hours}h ${String(minutes).padStart(2, '0')}m`
-    }
-
-    return `${minutes}:${String(seconds).padStart(2, '0')}`
   }
 
   // Close expanded panel on Escape
@@ -97,7 +80,7 @@
       <span v-else-if="timer.isPaused" class="timer-dot timer-dot--paused" />
 
       <template v-if="timer.isActive">
-        <span class="timer-elapsed">{{ formatMs(timer.state.elapsedMs) }}</span>
+        <span class="timer-elapsed">{{ formatElapsed(timer.state.elapsedMs) }}</span>
         <span v-if="timer.state.projectName" class="timer-project-label">
           {{ timer.state.projectName }}
         </span>
@@ -127,9 +110,9 @@
       />
 
       <div class="timer-panel-actions">
-        <button class="btn btn--sm" @click="expanded = false">Cancel</button>
+        <button class="btn-secondary sm" @click="expanded = false">Cancel</button>
         <button
-          class="btn btn--sm btn--primary"
+          class="btn-primary sm"
           :disabled="selectedProjectId === null"
           @click="handleStart"
         >
@@ -148,8 +131,8 @@
       </div>
       <p v-if="timer.state.note" class="timer-panel-note">{{ timer.state.note }}</p>
       <div class="timer-panel-actions">
-        <button class="btn btn--sm" @click="handlePause">Pause</button>
-        <button class="btn btn--sm btn--danger" @click="handleStop">Stop</button>
+        <button class="btn-secondary sm" @click="handlePause">Pause</button>
+        <button class="btn-danger sm" @click="handleStop">Stop</button>
       </div>
     </div>
 
@@ -165,8 +148,8 @@
       </div>
       <p class="timer-panel-status">Paused</p>
       <div class="timer-panel-actions">
-        <button class="btn btn--sm" @click="handleStop">Stop</button>
-        <button class="btn btn--sm btn--primary" @click="handleResume">Resume</button>
+        <button class="btn-secondary sm" @click="handleStop">Stop</button>
+        <button class="btn-primary sm" @click="handleResume">Resume</button>
       </div>
     </div>
   </div>
@@ -342,5 +325,11 @@
     display: flex;
     gap: var(--space-2);
     justify-content: flex-end;
+  }
+
+  /* Compact panel buttons — the global button styles are sized for page forms. */
+  .sm {
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-xs);
   }
 </style>

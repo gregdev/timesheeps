@@ -2,11 +2,16 @@
   import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
   import { useProjectsStore } from '../stores/projects'
   import { useTimeline } from '../composables/useTimeline'
+  import type { EntryRange } from '../composables/useEntryModal'
   import type { Project } from '../schemas'
 
   const props = defineProps<{
-    initialStart: number
-    initialEnd: number
+    /**
+     * The entries to create. A Window Activity row can cover several sessions, so
+     * this is a list — the modal shows the count and total, and saving creates one
+     * entry per range rather than one entry spanning the gaps between them.
+     */
+    initialRanges: EntryRange[]
     initialProjectId: number | null
     initialNote: string
     entryId: number | null
@@ -15,14 +20,7 @@
   }>()
 
   const emit = defineEmits<{
-    (
-      e: 'save',
-      projectId: number,
-      startMinutes: number,
-      endMinutes: number,
-      note: string,
-      autoTrack: boolean,
-    ): void
+    (e: 'save', projectId: number, ranges: EntryRange[], note: string, autoTrack: boolean): void
     (e: 'delete', id: number): void
     (e: 'cancel'): void
   }>()
@@ -34,19 +32,24 @@
   const query = ref(initialProject?.name ?? '')
   const selectedProjectId = ref<number | null>(props.initialProjectId ?? null)
   const note = ref(props.initialNote)
-  const startMin = ref(props.initialStart)
-  const endMin = ref(props.initialEnd)
+  const ranges = computed(() => props.initialRanges)
+  /** Non-null only for the ordinary single-entry case. */
+  const singleRange = computed(() => (ranges.value.length === 1 ? ranges.value[0] : null))
   const showDropdown = ref(false)
   const highlightedIndex = ref(-1)
   const inputRef = ref<HTMLInputElement>()
   const autoTrack = ref(props.initialAutoTrack ?? false)
   const showAutoTrack = computed(() => !!props.autoTrackAppName)
+  /** Guards against a second save landing while the first is still in flight. */
+  let saveInFlight = false
 
   onMounted(() => {
     nextTick(() => inputRef.value?.focus())
   })
 
-  const durationMin = computed(() => endMin.value - startMin.value)
+  const durationMin = computed(() =>
+    ranges.value.reduce((total, r) => total + (r.endMinutes - r.startMinutes), 0),
+  )
   const isEditing = computed(() => props.entryId !== null)
 
   const filtered = computed(() => {
@@ -161,18 +164,28 @@
   }
 
   async function save() {
-    let projectId = selectedProjectId.value
-
-    if (!projectId && query.value.trim()) {
-      const p = await projectsStore.create(query.value.trim(), '#6366f1')
-      projectId = p.id
-    }
-
-    if (!projectId) {
+    if (saveInFlight) {
       return
     }
 
-    emit('save', projectId, startMin.value, endMin.value, note.value, autoTrack.value)
+    saveInFlight = true
+
+    try {
+      let projectId = selectedProjectId.value
+
+      if (!projectId && query.value.trim()) {
+        const p = await projectsStore.create(query.value.trim(), '#6366f1')
+        projectId = p.id
+      }
+
+      if (!projectId) {
+        return
+      }
+
+      emit('save', projectId, ranges.value, note.value, autoTrack.value)
+    } finally {
+      saveInFlight = false
+    }
   }
 
   function onDelete() {
@@ -184,14 +197,25 @@
   function onDocKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       emit('cancel')
-    } else if (e.key === 'Enter') {
-      const isCtrlEnter = e.ctrlKey
-      const targetIsTextarea = e.target instanceof HTMLTextAreaElement
+      return
+    }
 
-      if ((isCtrlEnter || !targetIsTextarea) && canSave.value) {
-        e.preventDefault()
-        save()
-      }
+    if (e.key !== 'Enter') {
+      return
+    }
+
+    // Enter on the focused footer button fires the button's own click handler
+    // as well as this listener — saving twice would create duplicate entries.
+    if (e.target instanceof HTMLButtonElement) {
+      return
+    }
+
+    const isCtrlEnter = e.ctrlKey
+    const targetIsTextarea = e.target instanceof HTMLTextAreaElement
+
+    if ((isCtrlEnter || !targetIsTextarea) && canSave.value) {
+      e.preventDefault()
+      save()
     }
   }
 
@@ -208,9 +232,22 @@
       </div>
 
       <div class="modal-body">
-        <div class="time-range">
-          {{ minutesToTime(startMin) }} – {{ minutesToTime(endMin) }}
+        <div v-if="ranges.length > 0" class="time-range">
+          <template v-if="singleRange">
+            {{ minutesToTime(singleRange.startMinutes) }} –
+            {{ minutesToTime(singleRange.endMinutes) }}
+          </template>
+          <template v-else>{{ ranges.length }} sessions</template>
           <span class="duration-badge">{{ formatDuration(durationMin) }}</span>
+        </div>
+
+        <div v-if="ranges.length > 1" class="session-list">
+          <span v-for="(r, i) in ranges" :key="i" class="session-chip">
+            {{ minutesToTime(r.startMinutes) }}–{{ minutesToTime(r.endMinutes) }}
+          </span>
+          <p class="hint">
+            One entry is created per session — the gaps between them are not tracked.
+          </p>
         </div>
 
         <div class="form-group">
@@ -364,6 +401,28 @@
     font-size: var(--text-xs);
     color: var(--text-muted);
     margin-top: 4px;
+  }
+
+  .session-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 14px;
+  }
+
+  .session-chip {
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    padding: 2px var(--space-2);
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+
+  .session-list .hint {
+    flex-basis: 100%;
+    margin-top: 2px;
   }
 
   .autocomplete {

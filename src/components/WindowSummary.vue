@@ -2,10 +2,11 @@
   import { computed } from 'vue'
   import { useDayStore } from '../stores/day'
   import { useTimeline } from '../composables/useTimeline'
-  import { useEntryModal } from '../composables/useEntryModal'
+  import { useEntryModal, type EntryRange } from '../composables/useEntryModal'
   import { useContextMenu } from '../composables/useContextMenu'
   import { useSettingsStore } from '../stores/settings'
   import { useAppColour } from '../composables/useAppColour'
+  import { cleanWindowTitle, formatSeconds } from '../composables/useFormat'
   import type { WindowSummaryItem } from '../schemas'
 
   const dayStore = useDayStore()
@@ -14,6 +15,51 @@
   const { open: openMenu } = useContextMenu()
   const settingsStore = useSettingsStore()
   const { appColour: appColor } = useAppColour()
+
+  /**
+   * The blocks a summary row aggregates, as one range per session.
+   *
+   * The row was grouped by whichever key `get_window_summary_for_date` chose, so the
+   * match has to follow the same rule: title for title-split apps, the extracted key
+   * for grouped apps, and the window handle otherwise. Matching on `windowTitle`
+   * alone picked an arbitrary set of blocks, because a block's displayed title is
+   * its *last* title while the row shows its *longest* — two different things that
+   * happen to coincide on some days and not others.
+   */
+  function sessionsFor(item: WindowSummaryItem): EntryRange[] {
+    const name = item.appName.toLowerCase()
+    const splitByTitle = settingsStore.settings.titleSplitApps.some((a) => a.toLowerCase() === name)
+    const groupedByTitle = settingsStore.settings.titleGroupApps.some(
+      (a) => a.toLowerCase() === name,
+    )
+
+    const matched = dayStore.activityBlocks.filter((b) => {
+      if (b.appName !== item.appName) {
+        return false
+      }
+      if (splitByTitle) {
+        return b.windowTitle === item.windowTitle
+      }
+      if (groupedByTitle) {
+        // The row's title for these apps is a key extracted *from* the raw title
+        // (a project name), so it is never an exact block title.
+        return b.windowTitles.some((t) => t.includes(item.windowTitle))
+      }
+
+      // Rows recorded before the handle was captured fall back to grouping by title.
+      return item.windowId !== 0 ? b.windowId === item.windowId : b.windowTitle === item.windowTitle
+    })
+
+    // Blocks are already merged into sessions, so each is one range — and they stay
+    // separate entries, never a single span swallowing the gaps between them.
+    return matched
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+      .map((b) => ({
+        startMinutes: Math.round(isoToMinutes(b.startedAt)),
+        endMinutes: Math.round(isoToMinutes(b.endedAt)),
+      }))
+      .filter((r) => r.endMinutes > r.startMinutes)
+  }
 
   function onItemContextMenu(e: MouseEvent, item: WindowSummaryItem) {
     const alreadySplit = settingsStore.settings.titleSplitApps.some(
@@ -27,16 +73,23 @@
       {
         label: 'Track to project…',
         action: () => {
-          const matching = dayStore.activityBlocks
-            .filter((b) => b.appName === item.appName && b.windowTitle === item.windowTitle)
-            .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-          const startMinutes =
-            matching.length > 0 ? Math.round(isoToMinutes(matching[0].startedAt)) : 9 * 60
-          const endMinutes =
-            matching.length > 0
-              ? Math.round(isoToMinutes(matching[matching.length - 1].endedAt))
-              : 10 * 60
-          pendingCreate.value = { startMinutes, endMinutes, note: item.appName }
+          const ranges = sessionsFor(item)
+
+          if (ranges.length === 0) {
+            window.alert(
+              `No sessions to track for "${item.windowTitle}".\n\n` +
+                'Its visits on this day are all shorter than the minimum block length in ' +
+                'Settings, so there is nothing to create entries from.',
+            )
+            return
+          }
+
+          pendingCreate.value = {
+            startMinutes: ranges[0].startMinutes,
+            endMinutes: ranges[0].endMinutes,
+            ranges,
+            note: item.appName,
+          }
         },
       },
       {
@@ -63,37 +116,13 @@
     ])
   }
 
-  function formatDuration(totalSecs: number): string {
-    const h = Math.floor(totalSecs / 3600)
-    const m = Math.floor((totalSecs % 3600) / 60)
-
-    if (h === 0) {
-      return `${m}m`
-    }
-    if (m === 0) {
-      return `${h}h`
-    }
-
-    return `${h}h ${m}m`
-  }
-
-  /** Strip trailing app name from common window title patterns like:
-   *  "project — file — App Name"  →  "project — file"
-   *  "App Name"                   →  "" (hide if same as appName)
-   */
-  function cleanTitle(appName: string, title: string): string {
-    const parts = title.split(' \u2014 ')
-
-    if (parts.length > 1 && parts[parts.length - 1].toLowerCase() === appName.toLowerCase()) {
-      parts.pop()
-    }
-
-    const cleaned = parts.join(' — ')
-    return cleaned.toLowerCase() === appName.toLowerCase() ? '' : cleaned
-  }
-
   const totalSecs = computed(() =>
     dayStore.windowSummary.reduce((s: number, i: WindowSummaryItem) => s + i.totalSecs, 0),
+  )
+
+  /** Bars are relative to the busiest window, which is not necessarily the first. */
+  const maxItemSecs = computed(() =>
+    dayStore.windowSummary.reduce((max, i) => Math.max(max, i.totalSecs), 1),
   )
 </script>
 
@@ -101,7 +130,7 @@
   <aside class="window-summary">
     <div class="ws-header">
       <span class="ws-title">Window Activity</span>
-      <span class="ws-total">{{ formatDuration(totalSecs) }} total</span>
+      <span class="ws-total">{{ formatSeconds(totalSecs) }} total</span>
     </div>
 
     <div v-if="dayStore.windowSummary.length === 0" class="ws-empty">No activity recorded yet</div>
@@ -111,25 +140,25 @@
         v-for="item in dayStore.windowSummary"
         :key="item.appName + item.windowTitle"
         class="ws-item"
-        title="Right-click to create time entry"
+        data-tooltip="Right-click for actions"
         @contextmenu="onItemContextMenu($event, item)"
       >
         <div class="ws-bar-wrap">
           <div
             class="ws-bar"
             :style="{
-              width: (item.totalSecs / (dayStore.windowSummary[0]?.totalSecs || 1)) * 100 + '%',
+              width: (item.totalSecs / maxItemSecs) * 100 + '%',
               background: appColor(item.appName),
             }"
           />
         </div>
         <div class="ws-labels">
           <span class="ws-app" :style="{ color: appColor(item.appName) }">{{ item.appName }}</span>
-          <span v-if="cleanTitle(item.appName, item.windowTitle)" class="ws-window">
-            {{ cleanTitle(item.appName, item.windowTitle) }}
+          <span v-if="cleanWindowTitle(item.appName, item.windowTitle)" class="ws-window">
+            {{ cleanWindowTitle(item.appName, item.windowTitle) }}
           </span>
         </div>
-        <span class="ws-dur">{{ formatDuration(item.totalSecs) }}</span>
+        <span class="ws-dur">{{ formatSeconds(item.totalSecs) }}</span>
       </li>
     </ul>
   </aside>

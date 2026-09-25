@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 use crate::models::{
-    ActivityBlock, DaySearchResult, FilterRule, FilterRuleType, Project, ProjectMatchRule,
-    RawActivity, SearchResults, Settings, SuggestedEntry, TimeEntry,
+    ActivityBlock, DaySearchResult, FilterRule, FilterRuleType, KnownApp, MatchCondition,
+    MatchField, MatchOperator, Project, ProjectMatchRule, RawActivity, SearchResults, Settings,
+    TimeEntry,
 };
 
 #[allow(dead_code)]
@@ -22,10 +23,37 @@ pub fn open(app: &tauri::AppHandle) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Current schema version, stored in SQLite's `user_version` pragma.
+/// Bump this and add a `migrate_vN` step whenever the schema changes shape.
+///
+/// v2 repairs databases migrated by the original v1, which renamed
+/// `project_match_rules` out from under a foreign key that already pointed at
+/// it (see `repair_legacy_foreign_key`).
+const SCHEMA_VERSION: i64 = 2;
+
+/// Match rules: a named group of conditions, ordered by `position`.
+const CREATE_MATCH_RULES: &str = "
+    CREATE TABLE IF NOT EXISTS project_match_rules (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name       TEXT NOT NULL DEFAULT '',
+        position   INTEGER NOT NULL DEFAULT 0
+    );";
+
+/// Conditions are AND-ed together within their parent rule.
+const CREATE_MATCH_CONDITIONS: &str = "
+    CREATE TABLE IF NOT EXISTS project_match_rule_conditions (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        match_rule_id INTEGER NOT NULL REFERENCES project_match_rules(id) ON DELETE CASCADE,
+        position      INTEGER NOT NULL DEFAULT 0,
+        field         TEXT NOT NULL CHECK(field IN ('app_name', 'window_title')),
+        operator      TEXT NOT NULL CHECK(operator IN ('contains', 'equals', 'starts_with', 'ends_with')),
+        value         TEXT NOT NULL,
+        negate        INTEGER NOT NULL DEFAULT 0
+    );";
+
 fn run_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch("
-        CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
-
         CREATE TABLE IF NOT EXISTS activity_raw (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             started_at   TEXT NOT NULL,
@@ -69,21 +97,121 @@ fn run_migrations(conn: &Connection) -> Result<()> {
             value TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS project_match_rules (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            rule_type  TEXT NOT NULL CHECK(rule_type IN ('title_pattern', 'app_name')),
-            value      TEXT NOT NULL
-        );
+        CREATE INDEX IF NOT EXISTS idx_activity_raw_app
+            ON activity_raw (app_name);
     ")?;
 
     seed_default_settings(conn)?;
     // Add window_id to existing DBs that predate this column (ignored if already present)
     let _ = conn.execute("ALTER TABLE activity_raw ADD COLUMN window_id INTEGER NOT NULL DEFAULT 0", []);
+    // Add exe_path to existing DBs that predate this column (ignored if already present)
+    let _ = conn.execute("ALTER TABLE activity_raw ADD COLUMN exe_path TEXT NOT NULL DEFAULT ''", []);
     // Add parent_id to existing DBs (ignored if already present)
     let _ = conn.execute("ALTER TABLE projects ADD COLUMN parent_id INTEGER REFERENCES projects(id) ON DELETE SET NULL", []);
     // Remove expression index if it was ever created (non-deterministic, SQLite 3.38+ rejects it)
     let _ = conn.execute("DROP INDEX IF EXISTS idx_activity_raw_localdate", []);
+
+    // Databases predating the rule-group model used a flat
+    // `project_match_rules (rule_type, value)` shape. It is replaced outright —
+    // existing flat rules are not carried over.
+    if table_has_column(conn, "project_match_rules", "rule_type")? {
+        drop_legacy_rule_tables(conn)?;
+    }
+
+    conn.execute_batch(CREATE_MATCH_RULES)?;
+    conn.execute_batch(CREATE_MATCH_CONDITIONS)?;
+    repair_legacy_foreign_key(conn)?;
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_pmr_project
+            ON project_match_rules (project_id, position);
+         CREATE INDEX IF NOT EXISTS idx_pmrc_rule
+            ON project_match_rule_conditions (match_rule_id, position);",
+    )?;
+
+    set_schema_version(conn, SCHEMA_VERSION)?;
+    Ok(())
+}
+
+fn current_schema_version(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+}
+
+fn set_schema_version(conn: &Connection, version: i64) -> Result<()> {
+    // PRAGMA cannot be parameterised; `version` is an internal constant.
+    conn.execute_batch(&format!("PRAGMA user_version = {}", version))?;
+    Ok(())
+}
+
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The stored `CREATE TABLE` statement for a table, if it exists.
+fn table_sql(conn: &Connection, table: &str) -> Result<Option<String>> {
+    let mut stmt =
+        conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1")?;
+    let mut rows = stmt.query(params![table])?;
+    match rows.next()? {
+        Some(row) => Ok(row.get(0)?),
+        None => Ok(None),
+    }
+}
+
+/// Drop the pre-rule-group tables so they can be recreated with the current
+/// shape. The child table goes first while foreign keys are disabled.
+fn drop_legacy_rule_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         BEGIN;
+         DROP TABLE IF EXISTS project_match_rule_conditions;
+         DROP TABLE IF EXISTS project_match_rules;
+         DROP TABLE IF EXISTS project_match_rules_legacy;
+         DROP TABLE IF EXISTS schema_version;
+         COMMIT;
+         PRAGMA foreign_keys=ON;",
+    )?;
+    Ok(())
+}
+
+/// Repair databases written by the *original* v1 step, which renamed
+/// `project_match_rules` to `project_match_rules_legacy` while a foreign key
+/// already pointed at it. SQLite rewrites referencing keys when a table is
+/// renamed, so `project_match_rule_conditions` was left pointing at a table
+/// that was then dropped. Reads still worked, but every insert or delete on the
+/// conditions table failed with "no such table: project_match_rules_legacy",
+/// which made editing an existing rule impossible.
+///
+/// The child table is rebuilt with a correct key, preserving its rows.
+fn repair_legacy_foreign_key(conn: &Connection) -> Result<()> {
+    let Some(sql) = table_sql(conn, "project_match_rule_conditions")? else {
+        return Ok(());
+    };
+    if !sql.contains("_legacy") {
+        return Ok(());
+    }
+
+    conn.execute_batch(&format!(
+        "PRAGMA foreign_keys=OFF;
+         BEGIN;
+         ALTER TABLE project_match_rule_conditions RENAME TO project_match_rule_conditions_stale;
+         {CREATE_MATCH_CONDITIONS}
+         INSERT INTO project_match_rule_conditions
+             (id, match_rule_id, position, field, operator, value, negate)
+             SELECT id, match_rule_id, position, field, operator, value, negate
+             FROM project_match_rule_conditions_stale;
+         DROP TABLE project_match_rule_conditions_stale;
+         COMMIT;
+         PRAGMA foreign_keys=ON;"
+    ))?;
     Ok(())
 }
 
@@ -121,18 +249,20 @@ pub fn insert_activity(
     app_name: &str,
     window_title: &str,
     window_id: u64,
+    exe_path: &str,
     started_at: &DateTime<Utc>,
     ended_at: &DateTime<Utc>,
 ) -> Result<i64> {
     conn.execute(
-        "INSERT INTO activity_raw (started_at, ended_at, app_name, window_title, window_id)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO activity_raw (started_at, ended_at, app_name, window_title, window_id, exe_path)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             started_at.to_rfc3339(),
             ended_at.to_rfc3339(),
             app_name,
             window_title,
             window_id as i64,
+            exe_path,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -148,6 +278,19 @@ pub fn update_activity_end(
         params![ended_at.to_rfc3339(), id],
     )?;
     Ok(())
+}
+
+/// RFC3339 UTC timestamp for the start of the local day `offset_days` before today.
+fn local_day_start_utc(offset_days: i64) -> String {
+    use chrono::Local;
+    let date = (Local::now() + chrono::Duration::days(offset_days)).date_naive();
+    date.and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_local_timezone(Local)
+        .earliest()
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339()
 }
 
 pub fn get_raw_activity_for_date(conn: &Connection, date: &str) -> Result<Vec<RawActivity>> {
@@ -177,7 +320,7 @@ pub fn get_raw_activity_for_date(conn: &Connection, date: &str) -> Result<Vec<Ra
         (s, e)
     };
     let mut stmt = conn.prepare(
-        "SELECT id, started_at, ended_at, app_name, window_title, window_id
+        "SELECT id, started_at, ended_at, app_name, window_title, window_id, exe_path
          FROM activity_raw
          WHERE started_at >= ?1 AND started_at < ?2
          ORDER BY started_at",
@@ -197,6 +340,7 @@ pub fn get_raw_activity_for_date(conn: &Connection, date: &str) -> Result<Vec<Ra
             app_name: row.get(3)?,
             window_title: row.get(4)?,
             window_id: window_id_i64 as u64,
+            exe_path: row.get(6).unwrap_or_default(),
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
@@ -227,7 +371,7 @@ pub fn get_activity_for_date(
 /// 3. Return the last ` — ` or ` - ` segment as the project name
 ///
 /// Returns None if no meaningful project name can be extracted.
-fn extract_title_group_key(app_name: &str, window_title: &str) -> Option<String> {
+pub(crate) fn extract_title_group_key(app_name: &str, window_title: &str) -> Option<String> {
     let title = window_title.trim();
     if title.is_empty() {
         return None;
@@ -307,8 +451,8 @@ pub fn get_window_summary_for_date(
 
     let raw = get_raw_activity_for_date(conn, date)?;
 
-    // key → (total_secs, best_title, best_segment_secs)
-    let mut groups: HashMap<(String, String), (i64, String, i64)> = HashMap::new();
+    // key → (total_secs, best_title, best_segment_secs, window_id)
+    let mut groups: HashMap<(String, String), (i64, String, i64, u64)> = HashMap::new();
 
     for event in &raw {
         let duration = (event.ended_at - event.started_at).num_seconds();
@@ -341,12 +485,20 @@ pub fn get_window_summary_for_date(
             (event.app_name.clone(), format!("ttl:{}", event.window_title))
         };
 
+        // Only window-grouped rows have a meaningful handle: title-split groups
+        // span every window of that app, and grouped apps span every window too.
+        let group_window_id = if !split_by_title && group_key.is_none() && event.window_id != 0 {
+            event.window_id
+        } else {
+            0
+        };
+
         // For title_group_apps, use the extracted project name as the display title
         let display_title = group_key.as_ref().unwrap_or(&event.window_title);
 
         let entry = groups
             .entry(key)
-            .or_insert((0, display_title.clone(), 0));
+            .or_insert((0, display_title.clone(), 0, group_window_id));
         entry.0 += duration;
         if duration > entry.2 {
             entry.1 = display_title.clone();
@@ -356,8 +508,13 @@ pub fn get_window_summary_for_date(
 
     let mut result: Vec<crate::models::WindowSummaryItem> = groups
         .into_iter()
-        .map(|((app_name, _), (total_secs, window_title, _))| {
-            crate::models::WindowSummaryItem { app_name, window_title, total_secs }
+        .map(|((app_name, _), (total_secs, window_title, _, window_id))| {
+            crate::models::WindowSummaryItem {
+                app_name,
+                window_title,
+                total_secs,
+                window_id,
+            }
         })
         .collect();
     result.sort_by(|a, b| b.total_secs.cmp(&a.total_secs));
@@ -387,6 +544,30 @@ fn should_ignore(event: &RawActivity, rules: &[FilterRule]) -> bool {
     false
 }
 
+/// Max distinct window titles retained per merged block. Bounds the payload for
+/// very long sessions where a single window cycles through many documents.
+const MAX_BLOCK_TITLES: usize = 64;
+
+/// Append `title` to a block's title list, ignoring duplicates and past the cap.
+fn push_title(titles: &mut Vec<String>, title: &str) {
+    if titles.len() >= MAX_BLOCK_TITLES || titles.iter().any(|t| t == title) {
+        return;
+    }
+    titles.push(title.to_string());
+}
+
+fn new_block(event: &RawActivity) -> ActivityBlock {
+    ActivityBlock {
+        app_name: event.app_name.clone(),
+        window_title: event.window_title.clone(),
+        window_titles: vec![event.window_title.clone()],
+        started_at: event.started_at,
+        ended_at: event.ended_at,
+        duration_secs: (event.ended_at - event.started_at).num_seconds(),
+        window_id: event.window_id,
+    }
+}
+
 fn merge_and_filter(
     raw: Vec<RawActivity>,
     settings: &Settings,
@@ -407,15 +588,7 @@ fn merge_and_filter(
     // 2. Merge consecutive same-app events where gap <= merge_gap_secs
     let merge_gap = chrono::Duration::seconds(settings.merge_gap_secs);
     let mut merged: Vec<ActivityBlock> = Vec::new();
-    let first = &events[0];
-    let mut current = ActivityBlock {
-        app_name: first.app_name.clone(),
-        window_title: first.window_title.clone(),
-        started_at: first.started_at,
-        ended_at: first.ended_at,
-        duration_secs: (first.ended_at - first.started_at).num_seconds(),
-        window_id: first.window_id,
-    };
+    let mut current = new_block(&events[0]);
 
     for event in events.iter().skip(1) {
         let gap = event.started_at - current.ended_at;
@@ -427,16 +600,10 @@ fn merge_and_filter(
         if same_window && event.app_name == current.app_name && gap <= merge_gap {
             current.ended_at = event.ended_at;
             current.window_title = event.window_title.clone();
+            push_title(&mut current.window_titles, &event.window_title);
         } else {
-            merged.push(current.clone());
-            current = ActivityBlock {
-                app_name: event.app_name.clone(),
-                window_title: event.window_title.clone(),
-                started_at: event.started_at,
-                ended_at: event.ended_at,
-                duration_secs: (event.ended_at - event.started_at).num_seconds(),
-                window_id: event.window_id,
-            };
+            merged.push(current);
+            current = new_block(event);
         }
     }
     merged.push(current);
@@ -469,9 +636,12 @@ fn merge_and_filter(
         if same_window && block.app_name == current.app_name && gap <= merge_gap {
             current.ended_at = block.ended_at;
             current.window_title = block.window_title.clone();
+            for title in &block.window_titles {
+                push_title(&mut current.window_titles, title);
+            }
             current.duration_secs = (current.ended_at - current.started_at).num_seconds();
         } else {
-            result.push(current.clone());
+            result.push(current);
             current = block.clone();
         }
     }
@@ -553,6 +723,20 @@ pub fn archive_project(conn: &Connection, id: i64) -> Result<()> {
         "UPDATE projects SET archived_at = ?1 WHERE id = ?2",
         params![Utc::now().to_rfc3339(), id],
     )?;
+    Ok(())
+}
+
+pub fn unarchive_project(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE projects SET archived_at = NULL WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+
+/// Deletes a project. Time entries and match rules cascade away with it.
+pub fn delete_project(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
     Ok(())
 }
 
@@ -662,6 +846,30 @@ pub fn delete_filter_rule(conn: &Connection, id: i64) -> Result<()> {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
+// ── Generic key-value setting helpers ─────────────────────────────────────────
+
+/// Get a setting value as a String (or default).
+pub fn get_setting_str(conn: &Connection, key: &str, default: &str) -> Result<String> {
+    let val = conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .unwrap_or_else(|_| default.to_string());
+    Ok(val)
+}
+
+/// Set a setting value as a String.
+pub fn set_setting_str(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
 pub fn get_settings(conn: &Connection) -> Result<Settings> {
     let get = |key: &str, default: i64| -> i64 {
         conn.query_row(
@@ -764,39 +972,122 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
 // ── Project match rules ───────────────────────────────────────────────────────
 
 pub fn get_project_match_rules(conn: &Connection) -> Result<Vec<ProjectMatchRule>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, project_id, rule_type, value FROM project_match_rules ORDER BY id",
+    let mut rule_stmt = conn.prepare(
+        "SELECT id, project_id, name, position FROM project_match_rules
+         ORDER BY position, id",
     )?;
-    let rows = stmt.query_map([], |row| {
-        let type_str: String = row.get(2)?;
-        Ok(ProjectMatchRule {
-            id: row.get(0)?,
-            project_id: row.get(1)?,
-            rule_type: FilterRuleType::from_str(&type_str)
-                .unwrap_or(FilterRuleType::TitlePattern),
-            value: row.get(3)?,
+    let rows = rule_stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    })?;
+
+    let mut rules: Vec<ProjectMatchRule> = Vec::new();
+    for row in rows {
+        let (id, project_id, name, position) = row?;
+        rules.push(ProjectMatchRule {
+            id,
+            project_id,
+            name,
+            position,
+            conditions: get_rule_conditions(conn, id)?,
+        });
+    }
+    Ok(rules)
+}
+
+fn get_rule_conditions(conn: &Connection, rule_id: i64) -> Result<Vec<MatchCondition>> {
+    let mut stmt = conn.prepare(
+        "SELECT field, operator, value, negate FROM project_match_rule_conditions
+         WHERE match_rule_id = ?1 ORDER BY position, id",
+    )?;
+    let rows = stmt.query_map(params![rule_id], |row| {
+        let field_str: String = row.get(0)?;
+        let op_str: String = row.get(1)?;
+        let negate: i64 = row.get(3)?;
+        Ok(MatchCondition {
+            field: MatchField::from_str(&field_str).unwrap_or(MatchField::WindowTitle),
+            operator: MatchOperator::from_str(&op_str).unwrap_or(MatchOperator::Contains),
+            value: row.get(2)?,
+            negate: negate != 0,
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
+fn write_rule_conditions(
+    conn: &Connection,
+    rule_id: i64,
+    conditions: &[MatchCondition],
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM project_match_rule_conditions WHERE match_rule_id = ?1",
+        params![rule_id],
+    )?;
+    for (i, c) in conditions.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO project_match_rule_conditions
+                (match_rule_id, position, field, operator, value, negate)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                rule_id,
+                i as i64,
+                c.field.as_str(),
+                c.operator.as_str(),
+                c.value,
+                if c.negate { 1 } else { 0 },
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// New rules are appended to the end of the global precedence order.
+fn next_rule_position(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM project_match_rules",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn insert_project_match_rule(
     conn: &Connection,
     project_id: i64,
-    rule_type: &FilterRuleType,
-    value: &str,
+    name: &str,
+    conditions: &[MatchCondition],
 ) -> Result<ProjectMatchRule> {
+    let position = next_rule_position(conn)?;
     conn.execute(
-        "INSERT INTO project_match_rules (project_id, rule_type, value) VALUES (?1, ?2, ?3)",
-        params![project_id, rule_type.as_str(), value],
+        "INSERT INTO project_match_rules (project_id, name, position) VALUES (?1, ?2, ?3)",
+        params![project_id, name, position],
     )?;
     let id = conn.last_insert_rowid();
+    write_rule_conditions(conn, id, conditions)?;
     Ok(ProjectMatchRule {
         id,
         project_id,
-        rule_type: rule_type.clone(),
-        value: value.to_string(),
+        name: name.to_string(),
+        position,
+        conditions: conditions.to_vec(),
     })
+}
+
+pub fn update_project_match_rule(
+    conn: &Connection,
+    id: i64,
+    name: &str,
+    conditions: &[MatchCondition],
+) -> Result<()> {
+    conn.execute(
+        "UPDATE project_match_rules SET name = ?1 WHERE id = ?2",
+        params![name, id],
+    )?;
+    write_rule_conditions(conn, id, conditions)?;
+    Ok(())
 }
 
 pub fn delete_project_match_rule(conn: &Connection, id: i64) -> Result<()> {
@@ -804,57 +1095,96 @@ pub fn delete_project_match_rule(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn compute_suggestions(
-    blocks: Vec<ActivityBlock>,
-    rules: &[ProjectMatchRule],
-) -> Vec<SuggestedEntry> {
-    if rules.is_empty() {
-        return vec![];
+/// Rewrite the global precedence order from an explicit list of rule ids.
+pub fn reorder_project_match_rules(conn: &Connection, ordered_ids: &[i64]) -> Result<()> {
+    for (i, id) in ordered_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE project_match_rules SET position = ?1 WHERE id = ?2",
+            params![i as i64, id],
+        )?;
     }
+    Ok(())
+}
 
-    let mut raw: Vec<SuggestedEntry> = Vec::new();
-
-    for block in &blocks {
-        // First matching rule wins
-        for rule in rules {
-            let matches = match rule.rule_type {
-                FilterRuleType::TitlePattern => block
-                    .window_title
-                    .to_lowercase()
-                    .contains(&rule.value.to_lowercase()),
-                FilterRuleType::AppName => {
-                    block.app_name.to_lowercase() == rule.value.to_lowercase()
-                }
-            };
-            if matches {
-                raw.push(SuggestedEntry {
-                    project_id: rule.project_id,
-                    started_at: block.started_at,
-                    ended_at: block.ended_at,
-                });
-                break;
-            }
-        }
+/// Most recent non-empty executable path recorded for an app, used to look up
+/// its icon. Returns `None` for apps only seen before `exe_path` existed.
+pub fn get_exe_path_for_app(conn: &Connection, app_name: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT exe_path FROM activity_raw
+         WHERE app_name = ?1 AND exe_path <> ''
+         ORDER BY started_at DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![app_name])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
     }
+}
 
-    if raw.is_empty() {
-        return raw;
+/// Distinct local dates with recorded activity within the last `days` days,
+/// newest first. Used to bound the rule-stats sweep.
+pub fn get_active_dates(conn: &Connection, days: i64) -> Result<Vec<String>> {
+    let since = local_day_start_utc(-(days.max(1) - 1));
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT date(started_at, 'localtime') AS d
+         FROM activity_raw
+         WHERE started_at >= ?1
+         ORDER BY d DESC",
+    )?;
+    let rows = stmt.query_map(params![since], |row| row.get::<_, String>(0))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Applications seen in recorded activity, for the search-as-you-type value
+/// picker. `sample_titles` are the most time-consuming real window titles, so
+/// users pick values that actually exist instead of guessing them.
+pub fn get_known_apps(conn: &Connection, days: i64, max_titles: usize) -> Result<Vec<KnownApp>> {
+    let since = local_day_start_utc(-(days.max(1) - 1));
+
+    let mut app_stmt = conn.prepare(
+        "SELECT app_name,
+                CAST(SUM(strftime('%s', ended_at) - strftime('%s', started_at)) AS INTEGER) AS secs,
+                MAX(date(started_at, 'localtime')) AS last_seen,
+                MAX(exe_path) AS exe
+         FROM activity_raw
+         WHERE started_at >= ?1
+         GROUP BY app_name
+         ORDER BY secs DESC",
+    )?;
+    let apps = app_stmt.query_map(params![since], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1).unwrap_or(0),
+            row.get::<_, String>(2).unwrap_or_default(),
+            row.get::<_, String>(3).unwrap_or_default(),
+        ))
+    })?;
+
+    let mut title_stmt = conn.prepare(
+        "SELECT window_title
+         FROM activity_raw
+         WHERE started_at >= ?1 AND app_name = ?2 AND window_title <> ''
+         GROUP BY window_title
+         ORDER BY SUM(strftime('%s', ended_at) - strftime('%s', started_at)) DESC
+         LIMIT ?3",
+    )?;
+
+    let mut out: Vec<KnownApp> = Vec::new();
+    for app in apps {
+        let (app_name, total_secs, last_seen, exe_path) = app?;
+        let sample_titles: Vec<String> = title_stmt
+            .query_map(params![since, &app_name, max_titles as i64], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        out.push(KnownApp {
+            app_name,
+            total_secs,
+            last_seen,
+            exe_path,
+            sample_titles,
+        });
     }
-
-    // Merge consecutive suggestions for the same project
-    let mut merged: Vec<SuggestedEntry> = vec![raw[0].clone()];
-    for s in raw.iter().skip(1) {
-        let last = merged.last_mut().unwrap();
-        if s.project_id == last.project_id && s.started_at <= last.ended_at {
-            if s.ended_at > last.ended_at {
-                last.ended_at = s.ended_at;
-            }
-        } else {
-            merged.push(s.clone());
-        }
-    }
-
-    merged
+    Ok(out)
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
@@ -981,14 +1311,27 @@ fn build_activity_where(parsed: &ParsedQuery) -> (String, Vec<String>) {
 }
 
 /// Returns true if the block satisfies all include/exclude term constraints.
+///
+/// Title terms are tested against *every* title seen inside the block, not just
+/// the representative one. Blocks are merged by window, so a long browsing or
+/// editor session collapses into a single block whose last title would
+/// otherwise hide everything that came before it — and the candidate dates were
+/// chosen from the raw rows, so filtering on one title silently drops days.
 fn block_matches(block: &ActivityBlock, parsed: &ParsedQuery) -> bool {
     let app = block.app_name.to_lowercase();
-    let title = block.window_title.to_lowercase();
+    let mut titles: Vec<String> = block.window_titles.iter().map(|t| t.to_lowercase()).collect();
+
+    if !titles.contains(&block.window_title.to_lowercase()) {
+        titles.push(block.window_title.to_lowercase());
+    }
+
+    let any_title = |t: &str| titles.iter().any(|title| title.contains(t));
+
     for term in &parsed.include_terms {
         let hit = match term {
-            TermMatch::Any(t) => app.contains(t.as_str()) || title.contains(t.as_str()),
+            TermMatch::Any(t) => app.contains(t.as_str()) || any_title(t),
             TermMatch::App(t) => app.contains(t.as_str()),
-            TermMatch::Title(t) => title.contains(t.as_str()),
+            TermMatch::Title(t) => any_title(t),
         };
         if !hit {
             return false;
@@ -996,9 +1339,9 @@ fn block_matches(block: &ActivityBlock, parsed: &ParsedQuery) -> bool {
     }
     for term in &parsed.exclude_terms {
         let hit = match term {
-            TermMatch::Any(t) => app.contains(t.as_str()) || title.contains(t.as_str()),
+            TermMatch::Any(t) => app.contains(t.as_str()) || any_title(t),
             TermMatch::App(t) => app.contains(t.as_str()),
-            TermMatch::Title(t) => title.contains(t.as_str()),
+            TermMatch::Title(t) => any_title(t),
         };
         if hit {
             return false;
@@ -1156,4 +1499,363 @@ pub fn delete_activity_by_app_title(
         params![app_name, window_title],
     )?;
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{MatchField, MatchOperator};
+
+    /// A merged block whose representative title is the *last* one seen.
+    fn merged_block(app_name: &str, titles: &[&str]) -> ActivityBlock {
+        let start = DateTime::parse_from_rfc3339("2026-09-23T09:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let end = DateTime::parse_from_rfc3339("2026-09-23T10:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        ActivityBlock {
+            app_name: app_name.to_string(),
+            window_title: titles.last().unwrap().to_string(),
+            window_titles: titles.iter().map(|t| t.to_string()).collect(),
+            started_at: start,
+            ended_at: end,
+            duration_secs: 3600,
+            window_id: 1,
+        }
+    }
+
+    #[test]
+    fn search_matches_any_title_inside_a_merged_block() {
+        let block = merged_block("brave", &["[ELMS-5815] Waitlist - Jira", "New tab"]);
+        // "jira" only appears in the earlier title, not the representative one.
+        assert!(block_matches(&block, &parse_search_query("jira")));
+        assert!(block_matches(&block, &parse_search_query("title:waitlist")));
+        assert!(!block_matches(&block, &parse_search_query("console")));
+    }
+
+    #[test]
+    fn search_exclusion_applies_to_any_title_inside_a_merged_block() {
+        let block = merged_block("brave", &["[ELMS-5815] Waitlist - Jira", "New tab"]);
+        assert!(!block_matches(&block, &parse_search_query("-jira")));
+        assert!(!block_matches(&block, &parse_search_query("-title:waitlist")));
+        // The app-name match still holds, but the excluded title wins.
+        assert!(!block_matches(&block, &parse_search_query("app:brave -jira")));
+        assert!(block_matches(&block, &parse_search_query("app:brave title:new")));
+    }
+
+    /// Build a database with the *legacy* (pre-v1) schema, mirroring what
+    /// shipped before the rule-group rework.
+    fn legacy_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE projects (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                color       TEXT NOT NULL DEFAULT '#6366f1',
+                archived_at TEXT,
+                parent_id   INTEGER REFERENCES projects(id) ON DELETE SET NULL
+            );
+            CREATE TABLE project_match_rules (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                rule_type  TEXT NOT NULL CHECK(rule_type IN ('title_pattern', 'app_name')),
+                value      TEXT NOT NULL
+            );
+            INSERT INTO projects (id, name, color) VALUES (7, 'Proto', '#6366f1'), (8, 'Buyflow', '#22c55e');
+            INSERT INTO project_match_rules (project_id, rule_type, value) VALUES
+                (8, 'title_pattern', 'sdg-buyflow'),
+                (7, 'title_pattern', 'sdg-connect'),
+                (7, 'app_name', 'Code');
+            ",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn legacy_flat_rules_are_replaced_not_migrated() {
+        let conn = legacy_db();
+        run_migrations(&conn).unwrap();
+
+        // No backwards compatibility: the flat table is dropped and recreated.
+        assert!(!table_has_column(&conn, "project_match_rules", "rule_type").unwrap());
+        assert!(get_project_match_rules(&conn).unwrap().is_empty());
+        assert!(!table_exists(&conn, "project_match_rules_legacy"));
+        assert!(!table_exists(&conn, "schema_version"));
+        assert_eq!(current_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    /// The state left behind by the original v1 step: the conditions table's
+    /// foreign key points at a table that was renamed away and then dropped.
+    /// Reads worked, every write to the child table failed.
+    fn dangling_fk_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys=OFF;
+             CREATE TABLE projects (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name        TEXT NOT NULL,
+                 color       TEXT NOT NULL DEFAULT '#6366f1',
+                 archived_at TEXT,
+                 parent_id   INTEGER REFERENCES projects(id) ON DELETE SET NULL
+             );
+             CREATE TABLE project_match_rules (
+                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                 project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                 name       TEXT NOT NULL DEFAULT '',
+                 position   INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE project_match_rule_conditions (
+                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                 match_rule_id INTEGER NOT NULL REFERENCES project_match_rules_legacy(id) ON DELETE CASCADE,
+                 position      INTEGER NOT NULL DEFAULT 0,
+                 field         TEXT NOT NULL CHECK(field IN ('app_name', 'window_title')),
+                 operator      TEXT NOT NULL CHECK(operator IN ('contains', 'equals', 'starts_with', 'ends_with')),
+                 value         TEXT NOT NULL,
+                 negate        INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO projects (id, name, color) VALUES (7, 'Proto', '#6366f1');
+             INSERT INTO project_match_rules (id, project_id, name, position)
+                 VALUES (4, 7, 'sdg-connect', 4);
+             INSERT INTO project_match_rule_conditions
+                 (id, match_rule_id, position, field, operator, value, negate)
+                 VALUES (1, 4, 0, 'window_title', 'contains', 'sdg-connect', 0);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_dangling_foreign_key_is_repaired_and_writes_work_again() {
+        let conn = dangling_fk_db();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+
+        // Confirm the broken state first — this is the exact failure the user hit.
+        let failure = conn
+            .execute("DELETE FROM project_match_rule_conditions WHERE match_rule_id = 4", [])
+            .unwrap_err();
+        assert!(
+            failure.to_string().contains("project_match_rules_legacy"),
+            "expected the dangling key to be the cause, got: {failure}"
+        );
+
+        run_migrations(&conn).unwrap();
+
+        let fk_errors: Vec<String> = conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert!(fk_errors.is_empty(), "foreign_key_check reported {fk_errors:?}");
+
+        // Existing conditions survive the rebuild.
+        let rules = get_project_match_rules(&conn).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "sdg-connect");
+        assert_eq!(rules[0].conditions.len(), 1);
+        assert_eq!(rules[0].conditions[0].value, "sdg-connect");
+
+        // The write path that used to fail now works end to end.
+        update_project_match_rule(
+            &conn,
+            4,
+            "renamed",
+            &[MatchCondition {
+                field: MatchField::WindowTitle,
+                operator: MatchOperator::Contains,
+                value: "soa-buyflow".to_string(),
+                negate: false,
+            }],
+        )
+        .unwrap();
+
+        let reloaded = get_project_match_rules(&conn).unwrap();
+        assert_eq!(reloaded[0].name, "renamed");
+        assert_eq!(reloaded[0].conditions.len(), 1);
+        assert_eq!(reloaded[0].conditions[0].value, "soa-buyflow");
+        assert_eq!(current_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn the_repair_is_idempotent() {
+        let conn = dangling_fk_db();
+        run_migrations(&conn).unwrap();
+        let first = get_project_match_rules(&conn).unwrap();
+
+        run_migrations(&conn).unwrap();
+        let second = get_project_match_rules(&conn).unwrap();
+
+        assert_eq!(first.len(), second.len());
+        assert_eq!(first[0].conditions.len(), second[0].conditions.len());
+        assert_eq!(first[0].conditions[0].value, second[0].conditions[0].value);
+        assert!(!table_exists(&conn, "project_match_rule_conditions_stale"));
+    }
+
+    #[test]
+    fn migrations_are_idempotent_and_versioned() {
+        let conn = legacy_db();
+        run_migrations(&conn).unwrap();
+        assert_eq!(current_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+
+        // The legacy table and the dead version table are both gone.
+        assert!(!table_exists(&conn, "project_match_rules_legacy"));
+        assert!(!table_exists(&conn, "schema_version"));
+
+        // A rule written after the migration must survive a second startup.
+        let project = insert_project(&conn, "Proto", "#6366f1", None).unwrap();
+        let created = insert_project_match_rule(
+            &conn,
+            project.id,
+            "Proto work",
+            &[MatchCondition {
+                field: MatchField::WindowTitle,
+                operator: MatchOperator::Contains,
+                value: "sdg-connect".to_string(),
+                negate: false,
+            }],
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let after = get_project_match_rules(&conn).unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, created.id);
+        assert_eq!(after[0].name, "Proto work");
+        assert_eq!(after[0].conditions.len(), 1);
+        assert_eq!(after[0].conditions[0].value, "sdg-connect");
+        assert_eq!(current_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn fresh_database_gets_the_current_shape_directly() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(current_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+        assert!(!table_has_column(&conn, "project_match_rules", "rule_type").unwrap());
+        assert!(table_has_column(&conn, "activity_raw", "exe_path").unwrap());
+        assert!(get_project_match_rules(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rule_conditions_round_trip_in_order() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let project = insert_project(&conn, "Buyflow", "#22c55e", None).unwrap();
+
+        let conditions = vec![
+            MatchCondition {
+                field: MatchField::WindowTitle,
+                operator: MatchOperator::Contains,
+                value: "buyflow".to_string(),
+                negate: false,
+            },
+            MatchCondition {
+                field: MatchField::WindowTitle,
+                operator: MatchOperator::Contains,
+                value: "lottery".to_string(),
+                negate: true,
+            },
+        ];
+        let created =
+            insert_project_match_rule(&conn, project.id, "Buyflow work", &conditions).unwrap();
+        assert_eq!(created.conditions.len(), 2);
+
+        let loaded = get_project_match_rules(&conn).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Buyflow work");
+        assert_eq!(loaded[0].conditions[0].value, "buyflow");
+        assert!(!loaded[0].conditions[0].negate);
+        assert_eq!(loaded[0].conditions[1].value, "lottery");
+        assert!(loaded[0].conditions[1].negate);
+
+        // Updating replaces the condition set wholesale.
+        update_project_match_rule(
+            &conn,
+            created.id,
+            "renamed",
+            &[MatchCondition {
+                field: MatchField::AppName,
+                operator: MatchOperator::Equals,
+                value: "brave".to_string(),
+                negate: false,
+            }],
+        )
+        .unwrap();
+        let reloaded = get_project_match_rules(&conn).unwrap();
+        assert_eq!(reloaded[0].name, "renamed");
+        assert_eq!(reloaded[0].conditions.len(), 1);
+        assert_eq!(reloaded[0].conditions[0].field, MatchField::AppName);
+    }
+
+    #[test]
+    fn deleting_a_project_cascades_to_conditions() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let project = insert_project(&conn, "Temp", "#6366f1", None).unwrap();
+        let rule = insert_project_match_rule(
+            &conn,
+            project.id,
+            "temp",
+            &[MatchCondition {
+                field: MatchField::AppName,
+                operator: MatchOperator::Equals,
+                value: "olk".to_string(),
+                negate: false,
+            }],
+        )
+        .unwrap();
+
+        delete_project(&conn, project.id).unwrap();
+        assert!(get_project_match_rules(&conn).unwrap().is_empty());
+
+        let orphans: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM project_match_rule_conditions WHERE match_rule_id = ?1",
+                params![rule.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0);
+    }
+
+    #[test]
+    fn reorder_rewrites_global_precedence() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let a = insert_project(&conn, "A", "#6366f1", None).unwrap();
+        let b = insert_project(&conn, "B", "#22c55e", None).unwrap();
+        let cond = || {
+            vec![MatchCondition {
+                field: MatchField::AppName,
+                operator: MatchOperator::Equals,
+                value: "brave".to_string(),
+                negate: false,
+            }]
+        };
+        let r1 = insert_project_match_rule(&conn, a.id, "a", &cond()).unwrap();
+        let r2 = insert_project_match_rule(&conn, b.id, "b", &cond()).unwrap();
+
+        assert_eq!(get_project_match_rules(&conn).unwrap()[0].id, r1.id);
+
+        reorder_project_match_rules(&conn, &[r2.id, r1.id]).unwrap();
+        let after = get_project_match_rules(&conn).unwrap();
+        assert_eq!(after[0].id, r2.id);
+        assert_eq!(after[1].id, r1.id);
+    }
+
+    fn table_exists(conn: &Connection, table: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            > 0
+    }
 }

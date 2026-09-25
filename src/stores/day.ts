@@ -1,17 +1,26 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { format, addDays, subDays, parseISO } from 'date-fns'
+import { addDays, subDays, parseISO } from 'date-fns'
 import { api } from '../api'
+import { isoToLocalMinutes, localDateKey } from '../composables/useFormat'
+import type { EntryRange } from '../composables/useEntryModal'
 import { useSettingsStore } from './settings'
-import type { ActivityBlock, SuggestedEntry, TimeEntry, WindowSummaryItem } from '../schemas'
+import type {
+  ActivityBlock,
+  CalendarEvent,
+  SuggestedEntry,
+  TimeEntry,
+  WindowSummaryItem,
+} from '../schemas'
 
 export const useDayStore = defineStore('day', () => {
-  const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
-  const currentDate = ref(format(new Date(), 'yyyy-MM-dd'))
+  const selectedDate = ref(localDateKey(new Date()))
+  const currentDate = ref(localDateKey(new Date()))
   const activityBlocks = ref<ActivityBlock[]>([])
   const timeEntries = ref<TimeEntry[]>([])
   const windowSummary = ref<WindowSummaryItem[]>([])
   const rawSuggestions = ref<SuggestedEntry[]>([])
+  const calendarEvents = ref<CalendarEvent[]>([])
   const loading = ref(false)
   const loadError = ref<string | null>(null)
 
@@ -35,24 +44,50 @@ export const useDayStore = defineStore('day', () => {
       timeEntries.value = entries
       windowSummary.value = winSummary
       rawSuggestions.value = suggestions
+
+      // Load calendar events (fire-and-forget — don't block on failure)
+      api
+        .getCalendarEvents(selectedDate.value)
+        .then((events) => {
+          calendarEvents.value = events
+        })
+        .catch(() => {
+          calendarEvents.value = []
+        })
       loadError.value = null
 
       // Auto-accept suggestions if enabled
       const settingsStore = useSettingsStore()
+
       if (settingsStore.settings.autoAcceptSuggested && suggestions.length > 0) {
         const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes()
+        // Ranges accepted in this pass count as "existing" so two overlapping
+        // suggestions cannot both become entries.
+        const claimed: { start: number; end: number }[] = []
         let created = false
+
         for (const s of suggestions) {
           const startMin = isoToMinutes(s.startedAt)
           const endMin = isoToMinutes(s.endedAt)
-          if (endMin <= startMin) continue
+
+          if (endMin <= startMin) {
+            continue
+          }
+
           // Only auto-create entries that don't overlap existing ones
-          const overlaps = entries.some(
+          const overlapsEntry = entries.some(
             (e) => e.startMinutes < endMin && e.endMinutes > startMin,
           )
-          if (overlaps) continue
+          const overlapsClaimed = claimed.some((c) => c.start < endMin && c.end > startMin)
+
+          if (overlapsEntry || overlapsClaimed) {
+            continue
+          }
           // Don't auto-create entries that end in the future (still in progress)
-          if (endMin > nowMinutes + 5) continue
+          if (endMin > nowMinutes + 5) {
+            continue
+          }
+
           try {
             await api.createTimeEntry(
               selectedDate.value,
@@ -61,20 +96,17 @@ export const useDayStore = defineStore('day', () => {
               Math.round(endMin),
               '',
             )
+            claimed.push({ start: startMin, end: endMin })
             created = true
           } catch (e) {
             console.error('[timesheeps] auto-accept failed:', e)
           }
         }
-        // Reload to pick up newly created entries
+
+        // Reload to pick up newly created entries; `suggestedEntries` filters
+        // out anything that now overlaps, so no re-fetch is needed.
         if (created) {
-          const [newEntries] = await Promise.all([
-            api.getTimeEntriesForDay(selectedDate.value),
-            api.getSuggestedEntriesForDay(selectedDate.value),
-          ])
-          timeEntries.value = newEntries
-          // Re-fetch suggestions (they'll be filtered by overlap on next loadDay)
-          rawSuggestions.value = suggestions
+          timeEntries.value = await api.getTimeEntriesForDay(selectedDate.value)
         }
       }
     } catch (err) {
@@ -82,24 +114,28 @@ export const useDayStore = defineStore('day', () => {
       loadError.value = msg
       console.error('[timesheeps] loadDay failed:', err)
     } finally {
-      loading.value = false
+      // Only the caller that raised the flag may lower it — silent background
+      // refreshes must not clear a spinner raised by a real navigation.
+      if (!silent) {
+        loading.value = false
+      }
     }
   }
 
   function nextDay() {
-    loadDay(format(addDays(parseISO(selectedDate.value), 1), 'yyyy-MM-dd'))
+    loadDay(localDateKey(addDays(parseISO(selectedDate.value), 1)))
   }
 
   function prevDay() {
-    loadDay(format(subDays(parseISO(selectedDate.value), 1), 'yyyy-MM-dd'))
+    loadDay(localDateKey(subDays(parseISO(selectedDate.value), 1)))
   }
 
   function goToday() {
-    loadDay(format(new Date(), 'yyyy-MM-dd'))
+    loadDay(localDateKey(new Date()))
   }
 
   function refreshCurrentDate() {
-    const today = format(new Date(), 'yyyy-MM-dd')
+    const today = localDateKey(new Date())
 
     if (currentDate.value !== today) {
       const wasViewingToday = selectedDate.value === currentDate.value
@@ -111,22 +147,30 @@ export const useDayStore = defineStore('day', () => {
     }
   }
 
+  /**
+   * Create one entry per range. A Window Activity row can aggregate several
+   * separate sessions, so each becomes its own entry — a single entry spanning
+   * the gaps between them would count untracked time as work.
+   */
+  async function createEntries(projectId: number, ranges: EntryRange[], note: string) {
+    const created = await Promise.all(
+      ranges.map((r) =>
+        api.createTimeEntry(selectedDate.value, projectId, r.startMinutes, r.endMinutes, note),
+      ),
+    )
+    timeEntries.value = [...timeEntries.value, ...created].sort(
+      (a, b) => a.startMinutes - b.startMinutes,
+    )
+    return created
+  }
+
   async function createEntry(
     projectId: number,
     startMinutes: number,
     endMinutes: number,
     note: string,
   ) {
-    const entry = await api.createTimeEntry(
-      selectedDate.value,
-      projectId,
-      startMinutes,
-      endMinutes,
-      note,
-    )
-    timeEntries.value = [...timeEntries.value, entry].sort(
-      (a, b) => a.startMinutes - b.startMinutes,
-    )
+    const [entry] = await createEntries(projectId, [{ startMinutes, endMinutes }], note)
     return entry
   }
 
@@ -167,10 +211,8 @@ export const useDayStore = defineStore('day', () => {
     return map
   })
 
-  function isoToMinutes(iso: string): number {
-    const d = new Date(iso)
-    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60
-  }
+  /** UTC ISO timestamp → local minutes since midnight. */
+  const isoToMinutes = isoToLocalMinutes
 
   const suggestedEntries = computed(() => {
     return rawSuggestions.value
@@ -193,6 +235,7 @@ export const useDayStore = defineStore('day', () => {
     activityBlocks,
     timeEntries,
     windowSummary,
+    calendarEvents,
     suggestedEntries,
     loading,
     loadError,
@@ -203,6 +246,7 @@ export const useDayStore = defineStore('day', () => {
     goToday,
     refreshCurrentDate,
     createEntry,
+    createEntries,
     updateEntry,
     deleteEntry,
     summary,

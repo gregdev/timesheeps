@@ -1,11 +1,17 @@
 <script setup lang="ts">
   import { ref, computed } from 'vue'
   import { useProjectsStore } from '../stores/projects'
-  import { useSettingsStore } from '../stores/settings'
-  import type { FilterRuleType } from '../schemas'
+
+  const props = withDefaults(defineProps<{ selectedId?: number | null }>(), {
+    selectedId: null,
+  })
+
+  const emit = defineEmits<{
+    (e: 'select', id: number): void
+    (e: 'changed'): void
+  }>()
 
   const store = useProjectsStore()
-  const settingsStore = useSettingsStore()
 
   const editing = ref<{ id: number; name: string; color: string; parentId: number | null } | null>(
     null,
@@ -14,28 +20,7 @@
   const newName = ref('')
   const newColor = ref('#6366f1')
   const newParentId = ref<number | null>(null)
-
-  const newRuleType = ref<FilterRuleType>('title_pattern')
-  const newRuleValue = ref('')
-
-  const editingRules = computed(() =>
-    editing.value
-      ? settingsStore.projectMatchRules.filter((r) => r.projectId === editing.value!.id)
-      : [],
-  )
-
-  async function addRule() {
-    if (!newRuleValue.value.trim() || !editing.value) {
-      return
-    }
-
-    await settingsStore.createMatchRule(
-      editing.value.id,
-      newRuleType.value,
-      newRuleValue.value.trim(),
-    )
-    newRuleValue.value = ''
-  }
+  const confirmingDelete = ref<number | null>(null)
 
   const PRESET_COLORS = [
     '#6366f1',
@@ -94,11 +79,13 @@
       return
     }
 
-    await store.create(newName.value.trim(), newColor.value, newParentId.value)
+    const created = await store.create(newName.value.trim(), newColor.value, newParentId.value)
     newName.value = ''
     newColor.value = '#6366f1'
     newParentId.value = null
     creating.value = false
+    emit('changed')
+    emit('select', created.id)
   }
 
   function cancelCreate() {
@@ -108,7 +95,6 @@
 
   function cancelEdit() {
     editing.value = null
-    newRuleValue.value = ''
   }
 
   async function submitEdit() {
@@ -124,7 +110,23 @@
     )
 
     editing.value = null
-    newRuleValue.value = ''
+    emit('changed')
+  }
+
+  async function doArchive(id: number) {
+    await store.archive(id)
+    emit('changed')
+  }
+
+  async function doUnarchive(id: number) {
+    await store.unarchive(id)
+    emit('changed')
+  }
+
+  async function doDelete(id: number) {
+    await store.remove(id)
+    confirmingDelete.value = null
+    emit('changed')
   }
 </script>
 
@@ -134,7 +136,6 @@
       <h2>Projects</h2>
       <button class="btn-primary" @click="creating = true">+ New project</button>
     </div>
-
     <!-- Create form -->
     <div v-if="creating" class="edit-form">
       <div class="form-row">
@@ -186,7 +187,12 @@
         v-for="{ project: p, depth } in treeRows"
         :key="p.id"
         class="project-row"
-        :class="{ archived: !!p.archivedAt, child: depth === 1 }"
+        :class="{
+          archived: !!p.archivedAt,
+          child: depth === 1,
+          selected: props.selectedId === p.id,
+        }"
+        @click="emit('select', p.id)"
       >
         <template v-if="editing?.id === p.id">
           <div class="form-row" style="flex: 1; flex-wrap: wrap; gap: 8px">
@@ -194,10 +200,11 @@
               v-model="editing.name"
               style="flex: 1; min-width: 120px"
               autofocus
+              @click.stop
               @keyup.enter="submitEdit"
             />
 
-            <div class="swatches inline">
+            <div class="swatches inline" @click.stop>
               <button
                 v-for="c in PRESET_COLORS"
                 :key="c"
@@ -208,46 +215,21 @@
             </div>
 
             <!-- Parent select only for projects that have no active children -->
-            <select v-if="!hasActiveChildren(p.id)" v-model="editing.parentId" style="width: 100%">
+            <select
+              v-if="!hasActiveChildren(p.id)"
+              v-model="editing.parentId"
+              style="width: 100%"
+              @click.stop
+            >
               <option :value="null">None — standalone</option>
               <option v-for="parent in parentOptions" :key="parent.id" :value="parent.id">
                 {{ parent.name }}
               </option>
             </select>
-
-            <!-- Match rules -->
-            <div class="match-rules-section">
-              <div class="match-rules-label">Auto-match rules</div>
-              <div class="match-add-row">
-                <select v-model="newRuleType" class="rule-type-select">
-                  <option value="title_pattern">Title contains</option>
-                  <option value="app_name">App name is</option>
-                </select>
-                <input
-                  v-model="newRuleValue"
-                  placeholder="e.g. Jira"
-                  class="rule-value-input"
-                  @keyup.enter="addRule"
-                />
-                <button class="btn-secondary" :disabled="!newRuleValue.trim()" @click="addRule">
-                  Add
-                </button>
-              </div>
-              <div v-if="editingRules.length === 0" class="match-empty">No rules yet.</div>
-              <div v-for="rule in editingRules" :key="rule.id" class="match-rule-row">
-                <span class="rule-badge">
-                  {{ rule.ruleType === 'title_pattern' ? 'title' : 'app' }}
-                </span>
-                <code class="rule-val">{{ rule.value }}</code>
-                <button class="btn-ghost danger sm" @click="settingsStore.deleteMatchRule(rule.id)">
-                  ×
-                </button>
-              </div>
-            </div>
           </div>
 
-          <button class="btn-secondary" @click="cancelEdit">Cancel</button>
-          <button class="btn-primary" @click="submitEdit">Save</button>
+          <button class="btn-secondary" @click.stop="cancelEdit">Cancel</button>
+          <button class="btn-primary" @click.stop="submitEdit">Save</button>
         </template>
 
         <template v-else>
@@ -258,18 +240,30 @@
             <span v-if="p.archivedAt" class="archived-tag">archived</span>
           </span>
 
-          <div class="row-actions">
-            <button
-              v-if="!p.archivedAt"
-              class="btn-ghost"
-              @click="editing = { id: p.id, name: p.name, color: p.color, parentId: p.parentId }"
-            >
-              Edit
-            </button>
+          <div class="row-actions" @click.stop>
+            <template v-if="confirmingDelete === p.id">
+              <span class="confirm-text">Delete permanently?</span>
+              <button class="btn-ghost danger" @click="doDelete(p.id)">Delete</button>
+              <button class="btn-ghost" @click="confirmingDelete = null">Cancel</button>
+            </template>
 
-            <button v-if="!p.archivedAt" class="btn-ghost danger" @click="store.archive(p.id)">
-              Archive
-            </button>
+            <template v-else>
+              <button
+                v-if="!p.archivedAt"
+                class="btn-ghost"
+                @click="editing = { id: p.id, name: p.name, color: p.color, parentId: p.parentId }"
+              >
+                Edit
+              </button>
+
+              <button v-if="!p.archivedAt" class="btn-ghost" @click="doArchive(p.id)">
+                Archive
+              </button>
+
+              <button v-else class="btn-ghost" @click="doUnarchive(p.id)">Restore</button>
+
+              <button class="btn-ghost danger" @click="confirmingDelete = p.id">Delete</button>
+            </template>
           </div>
         </template>
       </div>
@@ -418,72 +412,15 @@
     background: color-mix(in srgb, var(--danger) 10%, transparent);
   }
 
-  .match-rules-section {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding-top: var(--space-2);
-    border-top: 1px solid var(--border);
-  }
-
-  .match-rules-label {
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .match-add-row {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-  }
-
-  .rule-type-select {
-    width: 130px;
-    flex-shrink: 0;
-  }
-
-  .rule-value-input {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .match-empty {
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-  }
-
-  .match-rule-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-xs);
-  }
-
-  .rule-badge {
+  .project-row.selected {
     background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 1px var(--space-1);
+    border-color: var(--border-strong);
+  }
+
+  .confirm-text {
     font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  .rule-val {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--danger);
+    align-self: center;
     white-space: nowrap;
-  }
-
-  .btn-ghost.sm {
-    padding: 1px 6px;
-    font-size: var(--text-sm);
-    line-height: 1;
   }
 </style>

@@ -7,11 +7,11 @@
   import { useProjectsStore } from '../stores/projects'
   import { useDayStore } from '../stores/day'
   import { usePeriodGrid } from '../composables/usePeriodGrid'
+  import { localDateKey } from '../composables/useFormat'
   import type { PeriodDayData } from '../composables/usePeriodGrid'
   import PeriodNav from '../components/PeriodNav.vue'
   import PeriodGrid from '../components/PeriodGrid.vue'
   import PeriodSummary from '../components/PeriodSummary.vue'
-  import type { TimeEntry } from '../schemas'
 
   const settingsStore = useSettingsStore()
   const projectsStore = useProjectsStore()
@@ -30,11 +30,15 @@
     if (freq === 'weekly') {
       const dow = anchor.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
       return startOfWeek(today, { weekStartsOn: dow })
-    } else {
-      const diff = differenceInDays(today, anchor)
-      const periodsElapsed = diff >= 0 ? Math.floor(diff / 14) : Math.ceil(diff / 14)
-      return addDays(anchor, periodsElapsed * 14)
     }
+
+    // Fortnightly periods are anchored, not weekday-based, so count how many
+    // whole periods have elapsed. `Math.floor` is correct on both sides of the
+    // anchor: for a date before it, `ceil` would round towards the anchor and
+    // return the *following* period, which does not contain today.
+    const diff = differenceInDays(today, anchor)
+    const periodsElapsed = Math.floor(diff / 14)
+    return addDays(anchor, periodsElapsed * 14)
   }
 
   const freq = computed(
@@ -53,7 +57,7 @@
   const periodDays = computed(() =>
     Array.from({ length: periodLength.value }, (_, i) => addDays(periodStart.value, i)),
   )
-  const periodDayStrings = computed(() => periodDays.value.map((d) => format(d, 'yyyy-MM-dd')))
+  const periodDayStrings = computed(() => periodDays.value.map((d) => localDateKey(d)))
 
   const periodLabel = computed(() => {
     const start = periodDays.value[0]
@@ -71,7 +75,7 @@
   })
 
   const isCurrentPeriod = computed(() => {
-    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    const todayStr = localDateKey(new Date())
     return periodDayStrings.value.includes(todayStr)
   })
 
@@ -123,31 +127,17 @@
     router.push('/')
   }
 
-  const { projectDayMinutes, dayTotalMinutes, hasUnlogged, fmtMin } = usePeriodGrid(dayData)
+  const { projectDayMinutes, dayTotalMinutes, hasUnlogged, fmtMin, entriesInRange, usedProjectIds } =
+    usePeriodGrid(dayData)
 
   const gridColumns = computed(() => `160px repeat(${periodLength.value}, minmax(50px, 1fr))`)
 
   const periodProjects = computed(() => {
-    const usedIds = new Set<number>()
-
-    for (const data of dayData.value.values()) {
-      for (const entry of data.entries) {
-        usedIds.add(entry.projectId)
-      }
-    }
-
-    return projectsStore.projects.filter((p) => !p.archivedAt && usedIds.has(p.id))
+    const used = usedProjectIds()
+    return projectsStore.active.filter((p) => used.has(p.id))
   })
 
-  const allEntries = computed(() => {
-    const entries: TimeEntry[] = []
-
-    for (const data of dayData.value.values()) {
-      entries.push(...data.entries)
-    }
-
-    return entries
-  })
+  const allEntries = computed(() => entriesInRange())
 </script>
 
 <template>

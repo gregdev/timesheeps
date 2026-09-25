@@ -1,24 +1,11 @@
 import type { Ref } from 'vue'
 import type { TimeEntry } from '../schemas'
+import { formatMinutes } from './useFormat'
 
 export interface PeriodDayData {
   date: string
   entries: TimeEntry[]
   hasActivity: boolean
-}
-
-function formatDuration(totalMin: number): string {
-  const h = Math.floor(totalMin / 60)
-  const m = totalMin % 60
-
-  if (h === 0) {
-    return `${m}m`
-  }
-  if (m === 0) {
-    return `${h}h`
-  }
-
-  return `${h}h ${m}m`
 }
 
 export function usePeriodGrid(dayData: Ref<Map<string, PeriodDayData>>) {
@@ -59,8 +46,39 @@ export function usePeriodGrid(dayData: Ref<Map<string, PeriodDayData>>) {
       return ''
     }
 
-    return formatDuration(min)
+    return formatMinutes(min)
   }
 
-  return { projectDayMinutes, dayTotalMinutes, hasUnlogged, fmtMin }
+  /** Every entry across the loaded range, in day order. */
+  function entriesInRange(): TimeEntry[] {
+    const entries: TimeEntry[] = []
+
+    for (const data of dayData.value.values()) {
+      entries.push(...data.entries)
+    }
+
+    return entries
+  }
+
+  /** Ids of the projects that have at least one entry in the loaded range. */
+  function usedProjectIds(): Set<number> {
+    const ids = new Set<number>()
+
+    for (const data of dayData.value.values()) {
+      for (const entry of data.entries) {
+        ids.add(entry.projectId)
+      }
+    }
+
+    return ids
+  }
+
+  return {
+    projectDayMinutes,
+    dayTotalMinutes,
+    hasUnlogged,
+    fmtMin,
+    entriesInRange,
+    usedProjectIds,
+  }
 }

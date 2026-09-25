@@ -1,46 +1,41 @@
 <script setup lang="ts">
   import { ref, computed, onMounted, onUnmounted } from 'vue'
+  import { invoke } from '@tauri-apps/api/core'
   import { useTimerStore } from '../stores/timer'
   import { useProjectsStore } from '../stores/projects'
-  import { invoke } from '@tauri-apps/api/core'
+  import { formatElapsed } from '../composables/useFormat'
 
   const timer = useTimerStore()
   const projectsStore = useProjectsStore()
 
   const selectedProjectId = ref<number | null>(null)
   const note = ref('')
-  const view = ref<'idle' | 'running'>('idle')
 
   const activeProjects = computed(() => projectsStore.projects.filter((p) => !p.archivedAt))
 
-  // Sync view with timer state
-  function syncView() {
-    if (timer.isActive) {
-      view.value = 'running'
-    } else {
-      view.value = 'idle'
+  // Close popup on Escape
+  function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      handleDismiss()
     }
   }
 
-  onMounted(async () => {
-    syncView()
+  function handleDismiss() {
+    void invoke('hide_main_window')
+  }
 
-    // Close popup on Escape
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        invoke('hide_main_window')
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    onUnmounted(() => document.removeEventListener('keydown', onKey))
-  })
+  function handleOpenApp() {
+    void invoke('show_main_window')
+  }
 
-  // Watch timer state changes from tick events
-  import { watch } from 'vue'
-  watch(() => timer.state.status, syncView)
+  onMounted(() => document.addEventListener('keydown', onKey))
+  onUnmounted(() => document.removeEventListener('keydown', onKey))
 
   async function handleStart() {
-    if (selectedProjectId.value === null) return
+    if (selectedProjectId.value === null) {
+      return
+    }
+
     await timer.start(selectedProjectId.value, note.value.trim())
     note.value = ''
   }
@@ -56,21 +51,6 @@
   async function handleStop() {
     await timer.stop()
     note.value = ''
-  }
-
-  function formatMs(ms: number): string {
-    const totalSeconds = Math.floor(ms / 1000)
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-    if (hours > 0) {
-      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-    }
-    return `${minutes}:${String(seconds).padStart(2, '0')}`
-  }
-
-  function handleDismiss() {
-    invoke('hide_main_window')
   }
 </script>
 
@@ -104,12 +84,8 @@
       />
 
       <div class="popup-actions">
-        <button class="btn btn--sm btn--ghost" @click="handleDismiss">Cancel</button>
-        <button
-          class="btn btn--sm btn--primary"
-          :disabled="selectedProjectId === null"
-          @click="handleStart"
-        >
+        <button class="btn-ghost sm" @click="handleDismiss">Cancel</button>
+        <button class="btn-primary sm" :disabled="selectedProjectId === null" @click="handleStart">
           Start
         </button>
       </div>
@@ -128,19 +104,36 @@
       </div>
 
       <div class="popup-time" :class="{ 'popup-time--paused': timer.isPaused }">
-        {{ formatMs(timer.state.elapsedMs) }}
+        {{ formatElapsed(timer.state.elapsedMs) }}
       </div>
 
       <p v-if="timer.state.note" class="popup-note">{{ timer.state.note }}</p>
 
       <div class="popup-actions">
-        <button v-if="timer.isRunning" class="btn btn--sm" @click="handlePause">Pause</button>
-        <button v-if="timer.isPaused" class="btn btn--sm btn--primary" @click="handleResume">
-          Resume
-        </button>
-        <button class="btn btn--sm btn--danger" @click="handleStop">Stop</button>
+        <button v-if="timer.isRunning" class="btn-secondary sm" @click="handlePause">Pause</button>
+        <button v-if="timer.isPaused" class="btn-primary sm" @click="handleResume">Resume</button>
+        <button class="btn-danger sm" @click="handleStop">Stop</button>
       </div>
     </template>
+
+    <!-- Always available: leave the popup for the full app window -->
+    <button class="popup-open-app" title="Open Timesheeps" @click="handleOpenApp">
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+        <path d="M1.5 6h13" />
+      </svg>
+      <span>Open full app</span>
+    </button>
   </div>
 </template>
 
@@ -264,13 +257,31 @@
     justify-content: flex-end;
   }
 
-  .btn--ghost {
+  .popup-open-app {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--border);
+    border-top-color: var(--border);
+    border-radius: 6px;
     background: transparent;
-    border: 1px solid transparent;
     color: var(--text-muted);
+    font-family: var(--font);
+    font-size: var(--text-xs);
+    cursor: pointer;
   }
 
-  .btn--ghost:hover {
+  .popup-open-app:hover {
     background: var(--surface-2);
+    color: var(--text);
+  }
+
+  /* Compact actions — the global button styles are sized for page forms. */
+  .sm {
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-xs);
   }
 </style>

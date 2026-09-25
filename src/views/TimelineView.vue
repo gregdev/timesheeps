@@ -25,7 +25,10 @@
   const resizingHandle = ref<'ws' | 'ps' | null>(null)
 
   function onResizeStart(handle: 'ws' | 'ps', e: MouseEvent) {
-    if (e.button !== 0) return
+    if (e.button !== 0) {
+      return
+    }
+
     e.preventDefault()
     resizingHandle.value = handle
     document.body.style.cursor = 'col-resize'
@@ -38,7 +41,11 @@
     if (resizingHandle.value === 'ws') {
       // Resize timeline-canvas ↔ window-summary; project-summary unchanged
       const area = document.querySelector('.main-area') as HTMLElement | null
-      if (!area) return
+
+      if (!area) {
+        return
+      }
+
       const rect = area.getBoundingClientRect()
       // windowSummaryWidth = distance from right edge, minus project-summary and handle widths
       const psW = projectSummaryWidth.value
@@ -47,7 +54,11 @@
       windowSummaryWidth.value = Math.max(100, Math.min(500, Math.round(newWsW)))
     } else if (resizingHandle.value === 'ps') {
       const area = document.querySelector('.main-area') as HTMLElement | null
-      if (!area) return
+
+      if (!area) {
+        return
+      }
+
       const rect = area.getBoundingClientRect()
       const newPsW = rect.right - e.clientX
       projectSummaryWidth.value = Math.max(100, Math.min(500, Math.round(newPsW)))
@@ -82,6 +93,7 @@
           } else {
             projectSummaryWidth.value = 220
           }
+
           settingsStore.save({
             ...settingsStore.settings,
             layoutWindowSummaryWidth: windowSummaryWidth.value,
@@ -115,30 +127,37 @@
       lines.push(`Total: ${formatDuration(total)}`)
     }
 
-    navigator.clipboard.writeText(lines.join('\n'))
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 2000)
+    navigator.clipboard
+      .writeText(lines.join('\n'))
+      .then(() => {
+        copied.value = true
+        setTimeout(() => {
+          copied.value = false
+        }, 2000)
+      })
+      .catch((e: unknown) => console.error('[timesheeps] clipboard write failed:', e))
   }
 
   // Auto-refresh activity when viewing today
   let refreshTimer: ReturnType<typeof setInterval> | null = null
   let unlistenActivityUpdated: (() => void) | null = null
 
+  function refreshIfViewingToday() {
+    // `refreshCurrentDate` is what notices the day rolling over at midnight —
+    // without it the app would keep polling *yesterday* until the window is
+    // next focused.
+    dayStore.refreshCurrentDate()
+
+    if (dayStore.isViewingToday) {
+      dayStore.loadDay(undefined, true)
+    }
+  }
+
   onMounted(async () => {
-    refreshTimer = setInterval(() => {
-      if (dayStore.isViewingToday) {
-        dayStore.loadDay(undefined, true)
-      }
-    }, 30_000)
+    refreshTimer = setInterval(refreshIfViewingToday, 30_000)
 
     // Also refresh immediately whenever the Rust poller writes new activity
-    unlistenActivityUpdated = await listen('activity-updated', () => {
-      if (dayStore.isViewingToday) {
-        dayStore.loadDay(undefined, true)
-      }
-    })
+    unlistenActivityUpdated = await listen('activity-updated', refreshIfViewingToday)
   })
 
   onUnmounted(() => {
@@ -148,6 +167,7 @@
     if (unlistenActivityUpdated) {
       unlistenActivityUpdated()
     }
+
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
     document.removeEventListener('mousemove', onResizeMove)

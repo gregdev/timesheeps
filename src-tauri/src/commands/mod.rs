@@ -1,4 +1,6 @@
 pub mod activity;
+pub mod apps;
+pub mod calendar;
 pub mod filter_rules;
 pub mod permissions;
 pub mod project_match_rules;

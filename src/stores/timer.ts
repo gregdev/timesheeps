@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { format } from 'date-fns'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '../api'
+import { formatElapsed } from '../composables/useFormat'
 import { useDayStore } from './day'
 import type { TimerState } from '../schemas'
 
@@ -25,18 +26,7 @@ export const useTimerStore = defineStore('timer', () => {
   const isPaused = computed(() => state.value.status === 'paused')
   const isActive = computed(() => state.value.status !== 'stopped')
 
-  const elapsedFormatted = computed(() => {
-    const ms = state.value.elapsedMs
-    const totalSeconds = Math.floor(ms / 1000)
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-
-    if (hours > 0) {
-      return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`
-    }
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-  })
+  const elapsedFormatted = computed(() => formatElapsed(state.value.elapsedMs))
 
   // ── actions ─────────────────────────────────────────────────────────────
   async function fetchState() {
@@ -100,6 +90,7 @@ export const useTimerStore = defineStore('timer', () => {
             startDate, finalState.projectId,
             startMinutes, endTotalMinutes, finalState.note,
           )
+
           if (isViewingStart) {
             dayStore.timeEntries = [
               ...dayStore.timeEntries, entry,
@@ -115,6 +106,7 @@ export const useTimerStore = defineStore('timer', () => {
               startDate, finalState.projectId,
               startMinutes, 1440, finalState.note,
             )
+
             if (isViewingStart) {
               dayStore.timeEntries = [
                 ...dayStore.timeEntries, entry1,
@@ -127,6 +119,7 @@ export const useTimerStore = defineStore('timer', () => {
               endDateStr, finalState.projectId,
               0, minsAfterMidnight, finalState.note,
             )
+
             if (isViewingEnd) {
               dayStore.timeEntries = [
                 ...dayStore.timeEntries, entry2,

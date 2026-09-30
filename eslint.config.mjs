@@ -8,6 +8,9 @@ export default tseslint.config(
       '**/dist/**',
       '**/node_modules/**',
       '**/.wrangler/**',
+      // Cargo build output. Contains tauri-codegen-asset bundles whose minified
+      // single-line JS makes ESLint report "Invalid character" parse errors.
+      '**/src-tauri/target/**',
       'api/drizzle/**',
       'api/scripts/**',
     ],

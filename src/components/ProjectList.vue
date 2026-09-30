@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { ref, computed } from 'vue'
   import { useProjectsStore } from '../stores/projects'
+  import { regexError } from '../composables/useRegex'
 
   const props = withDefaults(defineProps<{ selectedId?: number | null }>(), {
     selectedId: null,
@@ -13,13 +14,19 @@
 
   const store = useProjectsStore()
 
-  const editing = ref<{ id: number; name: string; color: string; parentId: number | null } | null>(
-    null,
-  )
+  const editing = ref<{
+    id: number
+    name: string
+    color: string
+    parentId: number | null
+    subGroupPattern: string | null
+  } | null>(null)
   const creating = ref(false)
   const newName = ref('')
   const newColor = ref('#6366f1')
   const newParentId = ref<number | null>(null)
+  /** Optional default ticket regex shared by this project's match rules. */
+  const newSubGroupPattern = ref('')
   const confirmingDelete = ref<number | null>(null)
 
   const PRESET_COLORS = [
@@ -74,15 +81,29 @@
     return store.projects.some((p) => p.parentId === id && !p.archivedAt)
   }
 
+  /**
+   * Client-side regex check for the optional ticket pattern.
+   * Rust stores a bad pattern without complaining and simply yields no
+   * sub-groups, so an unvalidated typo would look like it worked.
+   */
+  const newPatternError = computed(() => regexError(newSubGroupPattern.value))
+  const editPatternError = computed(() => regexError(editing.value?.subGroupPattern))
+
   async function submitCreate() {
-    if (!newName.value.trim()) {
+    if (!newName.value.trim() || newPatternError.value) {
       return
     }
 
-    const created = await store.create(newName.value.trim(), newColor.value, newParentId.value)
+    const created = await store.create(
+      newName.value.trim(),
+      newColor.value,
+      newParentId.value,
+      newSubGroupPattern.value.trim() || null,
+    )
     newName.value = ''
     newColor.value = '#6366f1'
     newParentId.value = null
+    newSubGroupPattern.value = ''
     creating.value = false
     emit('changed')
     emit('select', created.id)
@@ -91,6 +112,7 @@
   function cancelCreate() {
     creating.value = false
     newParentId.value = null
+    newSubGroupPattern.value = ''
   }
 
   function cancelEdit() {
@@ -98,7 +120,7 @@
   }
 
   async function submitEdit() {
-    if (!editing.value || !editing.value.name.trim()) {
+    if (!editing.value || !editing.value.name.trim() || editPatternError.value) {
       return
     }
 
@@ -107,6 +129,7 @@
       editing.value.name.trim(),
       editing.value.color,
       editing.value.parentId,
+      editing.value.subGroupPattern?.trim() || null,
     )
 
     editing.value = null
@@ -172,10 +195,33 @@
         </select>
       </div>
 
+      <div class="form-group">
+        <label>Ticket pattern (optional)</label>
+        <input
+          v-model="newSubGroupPattern"
+          placeholder="Regex, e.g. ELMS-\d+"
+          spellcheck="false"
+          @keyup.enter="submitCreate"
+        />
+        <p v-if="newPatternError" class="field-hint hint-error">
+          Invalid regex: {{ newPatternError }}
+        </p>
+        <p v-else class="field-hint">
+          Used to split this project's time by ticket. Match rules inherit it unless they define
+          their own.
+        </p>
+      </div>
+
       <div class="form-actions">
         <button class="btn-secondary" @click="cancelCreate">Cancel</button>
 
-        <button class="btn-primary" :disabled="!newName.trim()" @click="submitCreate">Add</button>
+        <button
+          class="btn-primary"
+          :disabled="!newName.trim() || !!newPatternError"
+          @click="submitCreate"
+        >
+          Add
+        </button>
       </div>
     </div>
 
@@ -226,10 +272,25 @@
                 {{ parent.name }}
               </option>
             </select>
+
+            <div style="width: 100%" @click.stop>
+              <input
+                v-model="editing.subGroupPattern"
+                placeholder="Ticket pattern (optional regex, e.g. ELMS-\d+)"
+                spellcheck="false"
+                style="width: 100%"
+                @keyup.enter="submitEdit"
+              />
+              <p v-if="editPatternError" class="field-hint hint-error">
+                Invalid regex: {{ editPatternError }}
+              </p>
+            </div>
           </div>
 
           <button class="btn-secondary" @click.stop="cancelEdit">Cancel</button>
-          <button class="btn-primary" @click.stop="submitEdit">Save</button>
+          <button class="btn-primary" :disabled="!!editPatternError" @click.stop="submitEdit">
+            Save
+          </button>
         </template>
 
         <template v-else>
@@ -238,6 +299,14 @@
           <span class="p-name" :class="{ 'text-muted': !!p.archivedAt }">
             {{ p.name }}
             <span v-if="p.archivedAt" class="archived-tag">archived</span>
+          </span>
+
+          <span
+            v-if="p.subGroupPattern"
+            class="pattern-tag"
+            :title="`Ticket pattern: ${p.subGroupPattern}`"
+          >
+            ticket
           </span>
 
           <div class="row-actions" @click.stop>
@@ -251,7 +320,15 @@
               <button
                 v-if="!p.archivedAt"
                 class="btn-ghost"
-                @click="editing = { id: p.id, name: p.name, color: p.color, parentId: p.parentId }"
+                @click="
+                  editing = {
+                    id: p.id,
+                    name: p.name,
+                    color: p.color,
+                    parentId: p.parentId,
+                    subGroupPattern: p.subGroupPattern,
+                  }
+                "
               >
                 Edit
               </button>
@@ -276,6 +353,21 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+  }
+
+  .hint-error {
+    color: var(--danger);
+  }
+
+  .pattern-tag {
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-faint);
+    border: 1px solid currentcolor;
+    border-radius: 999px;
+    padding: 0 6px;
+    opacity: 0.75;
   }
 
   .section-header {

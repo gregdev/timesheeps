@@ -23,6 +23,12 @@ export const ProjectSchema = z.object({
   color: z.string(),
   archivedAt: z.string().nullable(),
   parentId: z.number().nullable(),
+  /**
+   * Optional regex used to pull a sub-group key (e.g. a Jira ticket such as
+   * `ELMS-5813`) out of a window title, so this project's time can be broken
+   * down further. A match rule's own pattern overrides it. Null means none.
+   */
+  subGroupPattern: z.string().nullable(),
 })
 export type Project = z.infer<typeof ProjectSchema>
 
@@ -68,6 +74,8 @@ export const ProjectMatchRuleSchema = z.object({
   name: z.string(),
   position: z.number(),
   conditions: z.array(MatchConditionSchema),
+  /** Overrides the owning project's pattern for the blocks this rule claims. */
+  subGroupPattern: z.string().nullable(),
 })
 export type ProjectMatchRule = z.infer<typeof ProjectMatchRuleSchema>
 
@@ -119,6 +127,11 @@ export const SettingsSchema = z.object({
   layoutWindowSummaryWidth: z.number(),
   layoutProjectSummaryWidth: z.number(),
   autoAcceptSuggested: z.boolean(),
+  /**
+   * When false, the MCP server refuses to create or change anything, including
+   * projects, match rules and time entries. Claude cannot change this itself.
+   */
+  mcpAllowWrites: z.boolean(),
 })
 export type Settings = z.infer<typeof SettingsSchema>
 

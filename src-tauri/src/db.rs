@@ -16,11 +16,41 @@ pub struct Db(pub Connection);
 pub fn open(app: &tauri::AppHandle) -> Result<Connection> {
     let app_dir: PathBuf = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_dir)?;
-    let db_path = app_dir.join("timesheeps.db");
-    let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    let conn = open_at(&app_dir.join("timesheeps.db"))?;
     run_migrations(&conn)?;
     Ok(conn)
+}
+
+/// Open a connection at an explicit path, applying the pragmas every Timesheeps
+/// connection needs.
+///
+/// Deliberately does **not** run migrations. Only the app migrates; a second
+/// process (the MCP server) calls [`schema_is_current`] and refuses to work on a
+/// stale schema rather than racing the app's migration and legacy-repair path.
+pub fn open_at(db_path: &std::path::Path) -> Result<Connection> {
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let conn = Connection::open(db_path)?;
+    // WAL lets the MCP server read while the poller writes, and busy_timeout
+    // makes a writer-vs-writer collision wait instead of failing with SQLITE_BUSY
+    // (there is no busy_timeout by default).
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA foreign_keys=ON;
+         PRAGMA busy_timeout=5000;",
+    )?;
+    Ok(conn)
+}
+
+/// The schema version this build expects.
+pub fn schema_version() -> i64 {
+    SCHEMA_VERSION
+}
+
+/// Whether `conn` was already migrated to the schema this build understands.
+pub fn schema_is_current(conn: &Connection) -> Result<bool> {
+    Ok(current_schema_version(conn)? >= SCHEMA_VERSION)
 }
 
 /// Current schema version, stored in SQLite's `user_version` pragma.
@@ -29,7 +59,10 @@ pub fn open(app: &tauri::AppHandle) -> Result<Connection> {
 /// v2 repairs databases migrated by the original v1, which renamed
 /// `project_match_rules` out from under a foreign key that already pointed at
 /// it (see `repair_legacy_foreign_key`).
-const SCHEMA_VERSION: i64 = 2;
+///
+/// v3 adds the optional ticket/regex sub-group patterns and repairs
+/// negative-duration activity rows written by the old idle handling.
+const SCHEMA_VERSION: i64 = 3;
 
 /// Match rules: a named group of conditions, ordered by `position`.
 const CREATE_MATCH_RULES: &str = "
@@ -129,12 +162,50 @@ fn run_migrations(conn: &Connection) -> Result<()> {
             ON project_match_rule_conditions (match_rule_id, position);",
     )?;
 
+    // v3: optional regex used to pull a sub-group key (e.g. a Jira ticket like
+    // ELMS-5813) out of a window title, so time within a project can be broken
+    // down further. Empty string means "no pattern".
+    //
+    // Both ALTERs must run *after* the legacy drop/recreate above, or the column
+    // would be added to a table that is then thrown away. `projects` is never
+    // rebuilt, but keeping the two together makes the pairing obvious.
+    let _ = conn.execute(
+        "ALTER TABLE projects ADD COLUMN sub_group_pattern TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE project_match_rules ADD COLUMN sub_group_pattern TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+
+    // Repair rows written by the old idle handling, which stamped
+    // `ended_at = now - idle_secs` onto whatever row was open. When the
+    // foreground window changed while the user was already idle (a notification
+    // focusing itself, autoplay, a scheduled task) that row had only just been
+    // inserted, so ended_at landed before started_at and the row had a negative
+    // duration. Those rows are invisible in the day timeline (dropped by
+    // min_duration_secs) but silently subtract from window-summary totals.
+    conn.execute(
+        "UPDATE activity_raw SET ended_at = started_at WHERE ended_at < started_at",
+        [],
+    )?;
+
     set_schema_version(conn, SCHEMA_VERSION)?;
     Ok(())
 }
 
 fn current_schema_version(conn: &Connection) -> Result<i64> {
     Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+}
+
+/// Test-only: an in-memory database already migrated to the current schema.
+/// Unit tests in sibling modules (e.g. `reporting`) need this, and
+/// `run_migrations` stays private so nothing outside this module can migrate.
+#[cfg(test)]
+pub(crate) fn migrated_in_memory() -> Connection {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    run_migrations(&conn).expect("migrations");
+    conn
 }
 
 fn set_schema_version(conn: &Connection, version: i64) -> Result<()> {
@@ -232,6 +303,7 @@ fn seed_default_settings(conn: &Connection) -> Result<()> {
         ("pay_schedule_frequency", defaults.pay_schedule_frequency.clone()),
         ("pay_schedule_anchor", defaults.pay_schedule_anchor.clone()),
         ("auto_accept_suggested", if defaults.auto_accept_suggested { "1" } else { "0" }.to_string()),
+        ("mcp_allow_writes", if defaults.mcp_allow_writes { "1" } else { "0" }.to_string()),
     ];
     for (key, val) in pairs {
         conn.execute(
@@ -273,8 +345,18 @@ pub fn update_activity_end(
     id: i64,
     ended_at: &DateTime<Utc>,
 ) -> Result<()> {
+    // `ended_at` must never move behind the row's own `started_at`.
+    //
+    // Idle detection stamps the open row with `now - idle_secs`. If the
+    // foreground window changes while the user is *already* idle (a notification
+    // stealing focus, autoplay, a scheduled task), that row was only inserted at
+    // the previous poll, so the computed instant precedes its start and the row
+    // would get a negative duration. Clamping here makes the invariant hold for
+    // every write, whatever the caller computes.
     conn.execute(
-        "UPDATE activity_raw SET ended_at = ?1 WHERE id = ?2",
+        "UPDATE activity_raw
+         SET ended_at = CASE WHEN ?1 < started_at THEN started_at ELSE ?1 END
+         WHERE id = ?2",
         params![ended_at.to_rfc3339(), id],
     )?;
     Ok(())
@@ -651,9 +733,26 @@ fn merge_and_filter(
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
+/// `sub_group_pattern` is stored as `TEXT NOT NULL DEFAULT ''` (so the column
+/// addition is a plain ALTER) but exposed as an `Option`. Blank means "none".
+fn opt_pattern(raw: String) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Inverse of [`opt_pattern`], for binding into the `NOT NULL` column.
+fn pattern_param(pattern: Option<&str>) -> String {
+    pattern.map(str::trim).unwrap_or("").to_string()
+}
+
 pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, color, archived_at, parent_id FROM projects ORDER BY name",
+        "SELECT id, name, color, archived_at, parent_id, sub_group_pattern
+         FROM projects ORDER BY name",
     )?;
     let rows = stmt.query_map([], |row| {
         let archived_str: Option<String> = row.get(3)?;
@@ -668,6 +767,7 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
             color: row.get(2)?,
             archived_at,
             parent_id: row.get(4)?,
+            sub_group_pattern: opt_pattern(row.get(5)?),
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
@@ -675,7 +775,8 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
 
 pub fn get_project(conn: &Connection, id: i64) -> Result<Option<Project>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, color, archived_at, parent_id FROM projects WHERE id = ?1",
+        "SELECT id, name, color, archived_at, parent_id, sub_group_pattern
+         FROM projects WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map(params![id], |row| {
         let archived_str: Option<String> = row.get(3)?;
@@ -690,15 +791,23 @@ pub fn get_project(conn: &Connection, id: i64) -> Result<Option<Project>> {
             color: row.get(2)?,
             archived_at,
             parent_id: row.get(4)?,
+            sub_group_pattern: opt_pattern(row.get(5)?),
         })
     })?;
     Ok(rows.next().transpose()?)
 }
 
-pub fn insert_project(conn: &Connection, name: &str, color: &str, parent_id: Option<i64>) -> Result<Project> {
+pub fn insert_project(
+    conn: &Connection,
+    name: &str,
+    color: &str,
+    parent_id: Option<i64>,
+    sub_group_pattern: Option<&str>,
+) -> Result<Project> {
     conn.execute(
-        "INSERT INTO projects (name, color, parent_id) VALUES (?1, ?2, ?3)",
-        params![name, color, parent_id],
+        "INSERT INTO projects (name, color, parent_id, sub_group_pattern)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![name, color, parent_id, pattern_param(sub_group_pattern)],
     )?;
     let id = conn.last_insert_rowid();
     Ok(Project {
@@ -707,13 +816,28 @@ pub fn insert_project(conn: &Connection, name: &str, color: &str, parent_id: Opt
         color: color.to_string(),
         archived_at: None,
         parent_id,
+        sub_group_pattern: opt_pattern(pattern_param(sub_group_pattern)),
     })
 }
 
-pub fn update_project(conn: &Connection, id: i64, name: &str, color: &str, parent_id: Option<i64>) -> Result<()> {
+pub fn update_project(
+    conn: &Connection,
+    id: i64,
+    name: &str,
+    color: &str,
+    parent_id: Option<i64>,
+    sub_group_pattern: Option<&str>,
+) -> Result<()> {
     conn.execute(
-        "UPDATE projects SET name = ?1, color = ?2, parent_id = ?3 WHERE id = ?4",
-        params![name, color, parent_id, id],
+        "UPDATE projects SET name = ?1, color = ?2, parent_id = ?3, sub_group_pattern = ?4
+         WHERE id = ?5",
+        params![
+            name,
+            color,
+            parent_id,
+            pattern_param(sub_group_pattern),
+            id
+        ],
     )?;
     Ok(())
 }
@@ -937,6 +1061,7 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         layout_window_summary_width: get("layout_window_summary_width", d.layout_window_summary_width),
         layout_project_summary_width: get("layout_project_summary_width", d.layout_project_summary_width),
         auto_accept_suggested: get_bool("auto_accept_suggested", d.auto_accept_suggested),
+        mcp_allow_writes: get_bool("mcp_allow_writes", d.mcp_allow_writes),
     })
 }
 
@@ -959,6 +1084,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
         ("layout_window_summary_width", s.layout_window_summary_width.to_string()),
         ("layout_project_summary_width", s.layout_project_summary_width.to_string()),
         ("auto_accept_suggested", if s.auto_accept_suggested { "1" } else { "0" }.to_string()),
+        ("mcp_allow_writes", if s.mcp_allow_writes { "1" } else { "0" }.to_string()),
     ];
     for (key, val) in pairs {
         conn.execute(
@@ -973,7 +1099,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
 
 pub fn get_project_match_rules(conn: &Connection) -> Result<Vec<ProjectMatchRule>> {
     let mut rule_stmt = conn.prepare(
-        "SELECT id, project_id, name, position FROM project_match_rules
+        "SELECT id, project_id, name, position, sub_group_pattern FROM project_match_rules
          ORDER BY position, id",
     )?;
     let rows = rule_stmt.query_map([], |row| {
@@ -982,18 +1108,20 @@ pub fn get_project_match_rules(conn: &Connection) -> Result<Vec<ProjectMatchRule
             row.get::<_, i64>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, i64>(3)?,
+            row.get::<_, String>(4)?,
         ))
     })?;
 
     let mut rules: Vec<ProjectMatchRule> = Vec::new();
     for row in rows {
-        let (id, project_id, name, position) = row?;
+        let (id, project_id, name, position, pattern) = row?;
         rules.push(ProjectMatchRule {
             id,
             project_id,
             name,
             position,
             conditions: get_rule_conditions(conn, id)?,
+            sub_group_pattern: opt_pattern(pattern),
         });
     }
     Ok(rules)
@@ -1059,11 +1187,14 @@ pub fn insert_project_match_rule(
     project_id: i64,
     name: &str,
     conditions: &[MatchCondition],
+    sub_group_pattern: Option<&str>,
 ) -> Result<ProjectMatchRule> {
     let position = next_rule_position(conn)?;
+    let pattern = pattern_param(sub_group_pattern);
     conn.execute(
-        "INSERT INTO project_match_rules (project_id, name, position) VALUES (?1, ?2, ?3)",
-        params![project_id, name, position],
+        "INSERT INTO project_match_rules (project_id, name, position, sub_group_pattern)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![project_id, name, position, pattern],
     )?;
     let id = conn.last_insert_rowid();
     write_rule_conditions(conn, id, conditions)?;
@@ -1073,6 +1204,7 @@ pub fn insert_project_match_rule(
         name: name.to_string(),
         position,
         conditions: conditions.to_vec(),
+        sub_group_pattern: opt_pattern(pattern),
     })
 }
 
@@ -1081,10 +1213,11 @@ pub fn update_project_match_rule(
     id: i64,
     name: &str,
     conditions: &[MatchCondition],
+    sub_group_pattern: Option<&str>,
 ) -> Result<()> {
     conn.execute(
-        "UPDATE project_match_rules SET name = ?1 WHERE id = ?2",
-        params![name, id],
+        "UPDATE project_match_rules SET name = ?1, sub_group_pattern = ?2 WHERE id = ?3",
+        params![name, pattern_param(sub_group_pattern), id],
     )?;
     write_rule_conditions(conn, id, conditions)?;
     Ok(())
@@ -1671,6 +1804,7 @@ mod tests {
                 value: "soa-buyflow".to_string(),
                 negate: false,
             }],
+            None,
         )
         .unwrap();
 
@@ -1707,7 +1841,7 @@ mod tests {
         assert!(!table_exists(&conn, "schema_version"));
 
         // A rule written after the migration must survive a second startup.
-        let project = insert_project(&conn, "Proto", "#6366f1", None).unwrap();
+        let project = insert_project(&conn, "Proto", "#6366f1", None, None).unwrap();
         let created = insert_project_match_rule(
             &conn,
             project.id,
@@ -1718,6 +1852,7 @@ mod tests {
                 value: "sdg-connect".to_string(),
                 negate: false,
             }],
+            None,
         )
         .unwrap();
 
@@ -1746,7 +1881,7 @@ mod tests {
     fn rule_conditions_round_trip_in_order() {
         let conn = Connection::open_in_memory().unwrap();
         run_migrations(&conn).unwrap();
-        let project = insert_project(&conn, "Buyflow", "#22c55e", None).unwrap();
+        let project = insert_project(&conn, "Buyflow", "#22c55e", None, None).unwrap();
 
         let conditions = vec![
             MatchCondition {
@@ -1763,7 +1898,7 @@ mod tests {
             },
         ];
         let created =
-            insert_project_match_rule(&conn, project.id, "Buyflow work", &conditions).unwrap();
+            insert_project_match_rule(&conn, project.id, "Buyflow work", &conditions, None).unwrap();
         assert_eq!(created.conditions.len(), 2);
 
         let loaded = get_project_match_rules(&conn).unwrap();
@@ -1785,6 +1920,7 @@ mod tests {
                 value: "brave".to_string(),
                 negate: false,
             }],
+            None,
         )
         .unwrap();
         let reloaded = get_project_match_rules(&conn).unwrap();
@@ -1797,7 +1933,7 @@ mod tests {
     fn deleting_a_project_cascades_to_conditions() {
         let conn = Connection::open_in_memory().unwrap();
         run_migrations(&conn).unwrap();
-        let project = insert_project(&conn, "Temp", "#6366f1", None).unwrap();
+        let project = insert_project(&conn, "Temp", "#6366f1", None, None).unwrap();
         let rule = insert_project_match_rule(
             &conn,
             project.id,
@@ -1808,6 +1944,7 @@ mod tests {
                 value: "olk".to_string(),
                 negate: false,
             }],
+            None,
         )
         .unwrap();
 
@@ -1828,8 +1965,8 @@ mod tests {
     fn reorder_rewrites_global_precedence() {
         let conn = Connection::open_in_memory().unwrap();
         run_migrations(&conn).unwrap();
-        let a = insert_project(&conn, "A", "#6366f1", None).unwrap();
-        let b = insert_project(&conn, "B", "#22c55e", None).unwrap();
+        let a = insert_project(&conn, "A", "#6366f1", None, None).unwrap();
+        let b = insert_project(&conn, "B", "#22c55e", None, None).unwrap();
         let cond = || {
             vec![MatchCondition {
                 field: MatchField::AppName,
@@ -1838,8 +1975,8 @@ mod tests {
                 negate: false,
             }]
         };
-        let r1 = insert_project_match_rule(&conn, a.id, "a", &cond()).unwrap();
-        let r2 = insert_project_match_rule(&conn, b.id, "b", &cond()).unwrap();
+        let r1 = insert_project_match_rule(&conn, a.id, "a", &cond(), None).unwrap();
+        let r2 = insert_project_match_rule(&conn, b.id, "b", &cond(), None).unwrap();
 
         assert_eq!(get_project_match_rules(&conn).unwrap()[0].id, r1.id);
 
@@ -1847,6 +1984,120 @@ mod tests {
         let after = get_project_match_rules(&conn).unwrap();
         assert_eq!(after[0].id, r2.id);
         assert_eq!(after[1].id, r1.id);
+    }
+
+    fn ts(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn sub_group_pattern_round_trips_and_blank_means_none() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let conditions = || {
+            vec![MatchCondition {
+                field: MatchField::WindowTitle,
+                operator: MatchOperator::Contains,
+                value: "jira".to_string(),
+                negate: false,
+            }]
+        };
+
+        let project =
+            insert_project(&conn, "Lotteries", "#6366f1", None, Some("ELMS-\\d+")).unwrap();
+        assert_eq!(project.sub_group_pattern.as_deref(), Some("ELMS-\\d+"));
+        assert_eq!(
+            get_project(&conn, project.id)
+                .unwrap()
+                .unwrap()
+                .sub_group_pattern
+                .as_deref(),
+            Some("ELMS-\\d+")
+        );
+
+        let rule = insert_project_match_rule(&conn, project.id, "Jira", &conditions(), None).unwrap();
+        assert_eq!(rule.sub_group_pattern, None);
+
+        // Whitespace is not a pattern.
+        update_project_match_rule(&conn, rule.id, "Jira", &conditions(), Some("   ")).unwrap();
+        assert_eq!(get_project_match_rules(&conn).unwrap()[0].sub_group_pattern, None);
+
+        update_project_match_rule(&conn, rule.id, "Jira", &conditions(), Some("ELMS-(\\d+)"))
+            .unwrap();
+        assert_eq!(
+            get_project_match_rules(&conn).unwrap()[0]
+                .sub_group_pattern
+                .as_deref(),
+            Some("ELMS-(\\d+)")
+        );
+
+        // Clearing the project's pattern must persist too.
+        update_project(&conn, project.id, "Lotteries", "#6366f1", None, None).unwrap();
+        assert_eq!(
+            get_project(&conn, project.id).unwrap().unwrap().sub_group_pattern,
+            None
+        );
+    }
+
+    #[test]
+    fn update_activity_end_never_moves_a_row_backwards() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+
+        let start = ts("2026-09-23T09:00:00+00:00");
+        let id = insert_activity(&conn, "Code", "buyflow", 1, "", &start, &start).unwrap();
+
+        // What idle detection computes when the foreground window changed while
+        // the user was already idle: an instant *before* the row's own start.
+        update_activity_end(&conn, id, &ts("2026-09-23T08:00:00+00:00")).unwrap();
+
+        let (s, e): (String, String) = conn
+            .query_row(
+                "SELECT started_at, ended_at FROM activity_raw WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(e, s, "ended_at must be clamped to started_at");
+
+        // A legitimate extension still applies.
+        update_activity_end(&conn, id, &ts("2026-09-23T09:30:00+00:00")).unwrap();
+        let e: String = conn
+            .query_row(
+                "SELECT ended_at FROM activity_raw WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(e, "2026-09-23T09:30:00+00:00");
+    }
+
+    #[test]
+    fn migration_repairs_negative_duration_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+
+        // Written directly, bypassing the write-path clamp, exactly as the old
+        // idle handling would have left it.
+        conn.execute(
+            "INSERT INTO activity_raw
+                (started_at, ended_at, app_name, window_title, window_id, exe_path)
+             VALUES ('2026-09-23T09:00:00+00:00', '2026-09-23T08:59:00+00:00',
+                     'Code', 'buyflow', 1, '')",
+            [],
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM activity_raw WHERE ended_at < started_at",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
     }
 
     fn table_exists(conn: &Connection, table: &str) -> bool {

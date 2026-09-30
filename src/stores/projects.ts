@@ -23,18 +23,29 @@ export const useProjectsStore = defineStore('projects', () => {
     return active.value.filter((p) => p.parentId === parentId)
   }
 
-  async function create(name: string, color: string, parentId: number | null = null) {
-    const p = await api.createProject(name, color, parentId)
+  async function create(
+    name: string,
+    color: string,
+    parentId: number | null = null,
+    subGroupPattern: string | null = null,
+  ) {
+    const p = await api.createProject(name, color, parentId, subGroupPattern)
     projects.value = [...projects.value, p]
     return p
   }
 
-  async function update(id: number, name: string, color: string, parentId: number | null = null) {
-    await api.updateProject(id, name, color, parentId)
+  async function update(
+    id: number,
+    name: string,
+    color: string,
+    parentId: number | null = null,
+    subGroupPattern: string | null = null,
+  ) {
+    await api.updateProject(id, name, color, parentId, subGroupPattern)
     const idx = projects.value.findIndex((p) => p.id === id)
 
     if (idx >= 0) {
-      projects.value[idx] = { ...projects.value[idx], name, color, parentId }
+      projects.value[idx] = { ...projects.value[idx], name, color, parentId, subGroupPattern }
     }
   }
 

@@ -4683,7 +4683,7 @@ dependencies = [
 
 [[package]]
 name = "timesheeps"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "active-win-pos-rs",
  "anyhow",
@@ -4693,6 +4693,7 @@ dependencies = [
  "png 0.17.16",
  "rand 0.8.7",
  "raw-window-handle",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

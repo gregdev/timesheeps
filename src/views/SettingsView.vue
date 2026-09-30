@@ -499,8 +499,8 @@
           <h2>
             Projects
             <span class="count-pill">
-              {{ projectCount }} {{ projectCount === 1 ? 'project' : 'projects' }} ·
-              {{ ruleCount }} {{ ruleCount === 1 ? 'rule' : 'rules' }}
+              {{ projectCount }} {{ projectCount === 1 ? 'project' : 'projects' }} · {{ ruleCount }}
+              {{ ruleCount === 1 ? 'rule' : 'rules' }}
             </span>
           </h2>
 
@@ -546,19 +546,41 @@
             Also enable developer mode in Claude:
             <strong>Help → Troubleshoot → Enable Developer Mode</strong>
           </p>
+
+          <div class="form-group form-group--inline" style="margin-top: 0.75rem">
+            <label class="checkbox-label">
+              <input
+                v-model="form.mcpAllowWrites"
+                type="checkbox"
+                @change="trackField('mcpAllowWrites')"
+              />
+              Allow Claude to change projects, rules and time entries
+              <Transition name="check">
+                <span v-if="savedField === 'mcpAllowWrites'" class="field-check">✓</span>
+              </Transition>
+            </label>
+            <p class="field-hint">
+              Claude can then create projects, write match rules (including ticket patterns) and log
+              time entries, which it does through validated tools that reject overlaps and bad
+              regexes. Turn this off to make the integration strictly read-only. Claude cannot
+              change this setting itself.
+            </p>
+          </div>
         </section>
 
         <section class="settings-section">
           <h2>Microsoft 365 Calendar</h2>
 
           <label>
-            Connect your Outlook / Microsoft 365 calendar to see meetings on your timeline.
-            You'll need an
+            Connect your Outlook / Microsoft 365 calendar to see meetings on your timeline. You'll
+            need an
             <a
               href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
               target="_blank"
               rel="noopener"
-            >Azure AD app registration</a>
+            >
+              Azure AD app registration
+            </a>
             with the redirect URI
             <code>http://localhost</code>
             and the
@@ -566,14 +588,16 @@
             permission.
           </label>
 
-          <div v-if="settingsStore.m365Status.connected" class="claude-row" style="margin-top: 0.75rem">
+          <div
+            v-if="settingsStore.m365Status.connected"
+            class="claude-row"
+            style="margin-top: 0.75rem"
+          >
             <span class="saved-msg">
               ✓ Connected as
               <strong>{{ settingsStore.m365Status.accountName }}</strong>
             </span>
-            <button class="btn-primary" @click="settingsStore.disconnectM365()">
-              Disconnect
-            </button>
+            <button class="btn-primary" @click="settingsStore.disconnectM365()">Disconnect</button>
           </div>
 
           <div v-else class="claude-row" style="margin-top: 0.75rem; flex-wrap: wrap; gap: 0.5rem">

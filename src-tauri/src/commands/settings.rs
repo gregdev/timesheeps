@@ -30,14 +30,18 @@ pub fn save_settings(
 }
 
 /// Finds the compiled `timesheeps-mcp` binary.
-/// In production it lives in the Tauri resource dir (bundle.resources).
-/// In dev mode both executables land in target/debug/ from the same `cargo build`.
+///
+/// No `externalBin` or `bundle.resources` entry is needed: Tauri bundles the
+/// extra `[[bin]]` target automatically, placing it beside the main executable.
+/// On Windows `resource_dir()` *is* the executable's directory, so the first
+/// branch below is the one that normally hits in an installed build; the second
+/// covers `tauri dev`, where both binaries land in `target/debug/`.
 fn find_mcp_binary(app: &AppHandle) -> Option<std::path::PathBuf> {
     use tauri::Manager;
 
     let name = if cfg!(windows) { "timesheeps-mcp.exe" } else { "timesheeps-mcp" };
 
-    // Production: Tauri copies bundle.resources files to the resource dir
+    // Production: Tauri copies bundle resources (and the sidecar) to the resource dir
     if let Ok(resource_dir) = app.path().resource_dir() {
         let p = resource_dir.join(name);
         if p.exists() {

@@ -25,8 +25,14 @@ pub fn create_project_match_rule(
     state: State<AppState>,
 ) -> Result<ProjectMatchRule, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::insert_project_match_rule(&conn, payload.project_id, &payload.name, &payload.conditions)
-        .map_err(|e| e.to_string())
+    db::insert_project_match_rule(
+        &conn,
+        payload.project_id,
+        &payload.name,
+        &payload.conditions,
+        payload.sub_group_pattern.as_deref(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -35,8 +41,14 @@ pub fn update_project_match_rule(
     state: State<AppState>,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::update_project_match_rule(&conn, payload.id, &payload.name, &payload.conditions)
-        .map_err(|e| e.to_string())
+    db::update_project_match_rule(
+        &conn,
+        payload.id,
+        &payload.name,
+        &payload.conditions,
+        payload.sub_group_pattern.as_deref(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

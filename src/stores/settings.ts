@@ -52,6 +52,7 @@ export const useSettingsStore = defineStore('settings', () => {
     layoutWindowSummaryWidth: 220,
     layoutProjectSummaryWidth: 220,
     autoAcceptSuggested: false,
+    mcpAllowWrites: true,
   })
   const colourScheme = ref<ColourScheme>(
     (localStorage.getItem('colourScheme') as ColourScheme | null) ?? 'system',
@@ -97,6 +98,18 @@ export const useSettingsStore = defineStore('settings', () => {
     [...projectMatchRules.value].sort((a, b) => a.position - b.position || a.id - b.id),
   )
 
+  /**
+   * Re-read only the match rules.
+   *
+   * The MCP server can add or change rules while the app is open and nothing
+   * notifies the frontend, so the Projects page re-reads on window focus. Kept
+   * separate from `load()` deliberately: `load()` also replaces `settings`, which
+   * is mirrored into the Settings page's in-progress form and would clobber it.
+   */
+  async function loadMatchRules() {
+    projectMatchRules.value = await api.getProjectMatchRules()
+  }
+
   function statsFor(ruleId: number): RuleStat | undefined {
     return ruleStats.value.find((s) => s.ruleId === ruleId)
   }
@@ -131,18 +144,33 @@ export const useSettingsStore = defineStore('settings', () => {
     filterRules.value = filterRules.value.filter((r) => r.id !== id)
   }
 
-  async function createMatchRule(projectId: number, name: string, conditions: MatchCondition[]) {
-    const rule = await api.createProjectMatchRule(projectId, name, conditions)
+  async function createMatchRule(
+    projectId: number,
+    name: string,
+    conditions: MatchCondition[],
+    subGroupPattern: string | null = null,
+  ) {
+    const rule = await api.createProjectMatchRule(projectId, name, conditions, subGroupPattern)
     projectMatchRules.value = [...projectMatchRules.value, rule]
     return rule
   }
 
-  async function updateMatchRule(id: number, name: string, conditions: MatchCondition[]) {
-    await api.updateProjectMatchRule(id, name, conditions)
+  async function updateMatchRule(
+    id: number,
+    name: string,
+    conditions: MatchCondition[],
+    subGroupPattern: string | null = null,
+  ) {
+    await api.updateProjectMatchRule(id, name, conditions, subGroupPattern)
     const idx = projectMatchRules.value.findIndex((r) => r.id === id)
 
     if (idx >= 0) {
-      projectMatchRules.value[idx] = { ...projectMatchRules.value[idx], name, conditions }
+      projectMatchRules.value[idx] = {
+        ...projectMatchRules.value[idx],
+        name,
+        conditions,
+        subGroupPattern,
+      }
       projectMatchRules.value = [...projectMatchRules.value]
     }
   }
@@ -275,6 +303,7 @@ export const useSettingsStore = defineStore('settings', () => {
     createRule,
     deleteRule,
     createMatchRule,
+    loadMatchRules,
     updateMatchRule,
     deleteMatchRule,
     reorderMatchRules,

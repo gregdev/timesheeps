@@ -48,10 +48,25 @@ export const api = {
   getWindowSummaryForDay: (date: string) =>
     callArray(WindowSummaryItemSchema, 'get_window_summary_for_day', { date }),
   getProjects: () => callArray(ProjectSchema, 'get_projects'),
-  createProject: (name: string, color: string, parentId: number | null = null) =>
-    callOne(ProjectSchema, 'create_project', { payload: { name, color, parentId } }),
-  updateProject: (id: number, name: string, color: string, parentId: number | null = null) =>
-    invoke<void>('update_project', { payload: { id, name, color, parentId } }),
+  createProject: (
+    name: string,
+    color: string,
+    parentId: number | null = null,
+    subGroupPattern: string | null = null,
+  ) =>
+    callOne(ProjectSchema, 'create_project', {
+      payload: { name, color, parentId, subGroupPattern },
+    }),
+  updateProject: (
+    id: number,
+    name: string,
+    color: string,
+    parentId: number | null = null,
+    subGroupPattern: string | null = null,
+  ) =>
+    invoke<void>('update_project', {
+      payload: { id, name, color, parentId, subGroupPattern },
+    }),
   archiveProject: (id: number) => invoke<void>('archive_project', { id }),
   unarchiveProject: (id: number) => invoke<void>('unarchive_project', { id }),
   deleteProject: (id: number) => invoke<void>('delete_project', { id }),
@@ -93,12 +108,24 @@ export const api = {
   deleteFilterRule: (id: number) => invoke<void>('delete_filter_rule', { id }),
 
   getProjectMatchRules: () => callArray(ProjectMatchRuleSchema, 'get_project_match_rules'),
-  createProjectMatchRule: (projectId: number, name: string, conditions: MatchCondition[]) =>
+  createProjectMatchRule: (
+    projectId: number,
+    name: string,
+    conditions: MatchCondition[],
+    subGroupPattern: string | null = null,
+  ) =>
     callOne(ProjectMatchRuleSchema, 'create_project_match_rule', {
-      payload: { projectId, name, conditions },
+      payload: { projectId, name, conditions, subGroupPattern },
     }),
-  updateProjectMatchRule: (id: number, name: string, conditions: MatchCondition[]) =>
-    invoke<void>('update_project_match_rule', { payload: { id, name, conditions } }),
+  updateProjectMatchRule: (
+    id: number,
+    name: string,
+    conditions: MatchCondition[],
+    subGroupPattern: string | null = null,
+  ) =>
+    invoke<void>('update_project_match_rule', {
+      payload: { id, name, conditions, subGroupPattern },
+    }),
   deleteProjectMatchRule: (id: number) => invoke<void>('delete_project_match_rule', { id }),
   reorderProjectMatchRules: (orderedIds: number[]) =>
     invoke<void>('reorder_project_match_rules', { orderedIds }),
@@ -110,17 +137,11 @@ export const api = {
   /** Apps seen in recent activity, for the value picker. */
   getKnownApps: (days = 90) => callArray(KnownAppSchema, 'get_known_apps', { days }),
   /** PNG data URI for an app's icon, or null when it cannot be extracted. */
-  getAppIcon: (appName: string): Promise<string | null> =>
-    invoke('get_app_icon', { appName }),
+  getAppIcon: (appName: string): Promise<string | null> => invoke('get_app_icon', { appName }),
 
   search: (query: string) => callOne(SearchResultsSchema, 'search', { query }),
 
-  deleteActivityBlock: (
-    startedAt: string,
-    endedAt: string,
-    appName: string,
-    windowTitle: string,
-  ) =>
+  deleteActivityBlock: (startedAt: string, endedAt: string, appName: string, windowTitle: string) =>
     invoke<number>('delete_activity_block', { startedAt, endedAt, appName, windowTitle }),
   deleteActivityByAppTitle: (appName: string, windowTitle: string) =>
     invoke<number>('delete_activity_by_app_title', { appName, windowTitle }),

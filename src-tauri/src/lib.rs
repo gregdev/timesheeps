@@ -2,9 +2,13 @@ mod activity;
 mod appicon;
 mod calendar;
 mod commands;
-mod db;
-mod matcher;
-mod models;
+// `db`, `matcher` and `models` are public so the `timesheeps-mcp` binary (a
+// separate crate target) can reuse the real merge/match pipeline instead of
+// reimplementing it in SQL. Note a bin target cannot see `pub(crate)` items.
+pub mod db;
+pub mod matcher;
+pub mod models;
+pub mod reporting;
 mod nl_query;
 mod timer;
 

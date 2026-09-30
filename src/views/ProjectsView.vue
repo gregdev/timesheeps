@@ -4,6 +4,7 @@
    * authoring and the global precedence list on the right.
    */
   import { computed, onMounted, ref } from 'vue'
+  import { useEventListener } from '@vueuse/core'
   import { useProjectsStore } from '../stores/projects'
   import { useSettingsStore } from '../stores/settings'
   import ProjectList from '../components/ProjectList.vue'
@@ -61,6 +62,37 @@
     showEditor.value = false
     editingRule.value = null
   }
+
+  /**
+   * The pattern that will actually apply to a rule: its own, else its project's.
+   *
+   * Displaying the *effective* value rather than the rule's own field is what
+   * makes an override visible — otherwise a rule silently shadowing the project
+   * default looks identical to one with no pattern at all.
+   */
+  function effectivePattern(rule: ProjectMatchRule): string | null {
+    if (rule.subGroupPattern) {
+      return rule.subGroupPattern
+    }
+
+    return projectsStore.byId(rule.projectId)?.subGroupPattern ?? null
+  }
+
+  /**
+   * Re-read projects and rules when the window regains focus.
+   *
+   * Claude can create projects and rules through the MCP server while this page
+   * is open, and nothing pushes that to the frontend. Focus is the cheapest
+   * signal that a human is about to look at the list.
+   */
+  async function refreshFromDisk() {
+    await Promise.all([projectsStore.load(), settingsStore.loadMatchRules()])
+    await refreshStats()
+  }
+
+  useEventListener(window, 'focus', () => {
+    void refreshFromDisk()
+  })
 
   async function onSaved() {
     cancelEditor()
@@ -140,6 +172,17 @@
                       .map((c) => `${c.field === 'app_name' ? 'app' : 'title'} ${c.value}`)
                       .join(' AND ')
                   }}
+                </code>
+                <code
+                  v-if="effectivePattern(rule)"
+                  class="summary-pattern"
+                  :title="
+                    rule.subGroupPattern
+                      ? 'This rule\'s own ticket pattern'
+                      : 'Inherited from the project'
+                  "
+                >
+                  {{ effectivePattern(rule) }}
                 </code>
                 <button class="btn-ghost" @click="startEditRule(rule)">Edit</button>
               </div>
@@ -274,5 +317,19 @@
     white-space: nowrap;
     font-family: monospace;
     color: var(--text-muted);
+  }
+
+  .summary-pattern {
+    flex-shrink: 0;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    color: var(--text-faint);
+    border: 1px solid currentcolor;
+    border-radius: 999px;
+    padding: 0 6px;
+    opacity: 0.8;
   }
 </style>

@@ -6,6 +6,7 @@
    */
   import { computed, ref, watch } from 'vue'
   import { useSettingsStore } from '../stores/settings'
+  import { regexError } from '../composables/useRegex'
   import type { MatchCondition, MatchField, MatchOperator, ProjectMatchRule } from '../schemas'
   import ConditionValueInput from './ConditionValueInput.vue'
 
@@ -23,6 +24,8 @@
 
   const name = ref('')
   const conditions = ref<MatchCondition[]>([])
+  /** Optional regex that splits this rule's time by ticket (e.g. `ELMS-\d+`). */
+  const subGroupPattern = ref('')
   const saving = ref(false)
   const error = ref<string | null>(null)
 
@@ -42,6 +45,7 @@
 
   function reset() {
     name.value = props.rule?.name ?? ''
+    subGroupPattern.value = props.rule?.subGroupPattern ?? ''
     conditions.value = props.rule
       ? props.rule.conditions.map((c) => ({ ...c }))
       : [{ field: 'window_title', operator: 'contains', value: '', negate: false }]
@@ -58,8 +62,19 @@
     return appCondition?.value.trim() || undefined
   })
 
+  /**
+   * Regex validity for the ticket pattern, checked in the browser.
+   * The Rust side degrades gracefully on a bad pattern (the rule still matches,
+   * it just yields no sub-groups), so catching it here is the only place the
+   * mistake is visible as a mistake.
+   */
+  const patternError = computed(() => regexError(subGroupPattern.value))
+
   const canSave = computed(
-    () => conditions.value.some((c) => c.value.trim().length > 0) && !saving.value,
+    () =>
+      conditions.value.some((c) => c.value.trim().length > 0) &&
+      patternError.value === null &&
+      !saving.value,
   )
 
   function addCondition() {
@@ -91,11 +106,12 @@
 
     try {
       const finalName = name.value.trim() || defaultName()
+      const pattern = subGroupPattern.value.trim() || null
 
       if (props.rule) {
-        await settingsStore.updateMatchRule(props.rule.id, finalName, cleaned)
+        await settingsStore.updateMatchRule(props.rule.id, finalName, cleaned, pattern)
       } else {
-        await settingsStore.createMatchRule(props.projectId, finalName, cleaned)
+        await settingsStore.createMatchRule(props.projectId, finalName, cleaned, pattern)
       }
 
       emit('saved')
@@ -118,11 +134,7 @@
       />
     </div>
 
-    <div
-      v-for="(condition, index) in conditions"
-      :key="index"
-      class="condition-row"
-    >
+    <div v-for="(condition, index) in conditions" :key="index" class="condition-row">
       <span v-if="index > 0" class="and-badge">AND</span>
       <span v-else class="and-badge and-badge--spacer" />
 
@@ -142,7 +154,10 @@
         placeholder="e.g. Jira"
       />
 
-      <label class="negate-toggle" :title="condition.negate ? 'Condition is inverted' : 'Invert condition'">
+      <label
+        class="negate-toggle"
+        :title="condition.negate ? 'Condition is inverted' : 'Invert condition'"
+      >
         <input v-model="condition.negate" type="checkbox" />
         <span>is not</span>
       </label>
@@ -158,8 +173,28 @@
     </div>
 
     <p class="hint">
-      All conditions must match (AND). Separate rules are checked top-down —
-      the <strong>first</strong> match wins.
+      All conditions must match (AND). Separate rules are checked top-down — the
+      <strong>first</strong>
+      match wins.
+    </p>
+
+    <div class="pattern-row">
+      <label class="pattern-label" for="rule-sub-group-pattern">Ticket pattern</label>
+      <input
+        id="rule-sub-group-pattern"
+        v-model="subGroupPattern"
+        class="pattern-input"
+        :class="{ invalid: patternError !== null }"
+        placeholder="Optional regex, e.g. ELMS-\d+"
+        spellcheck="false"
+      />
+    </div>
+
+    <div v-if="patternError" class="error">Invalid regex: {{ patternError }}</div>
+    <p v-else class="hint">
+      Splits this rule's time by ticket. Tested (case-insensitively) against every window title in a
+      block; uses capture group 1 if the pattern has one, otherwise the whole match. Overrides the
+      project's pattern.
     </p>
 
     <div v-if="error" class="error">{{ error }}</div>
@@ -189,6 +224,31 @@
 
   .name-input {
     font-weight: 500;
+  }
+
+  .pattern-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .pattern-label {
+    flex-shrink: 0;
+    width: 96px;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-faint);
+    letter-spacing: 0.02em;
+  }
+
+  .pattern-input {
+    flex: 1;
+    font-family: 'Cascadia Code', Consolas, 'SF Mono', monospace;
+    font-size: var(--text-sm);
+  }
+
+  .pattern-input.invalid {
+    border-color: var(--danger);
   }
 
   .condition-row {

@@ -13,7 +13,8 @@ use chrono::{DateTime, Utc};
 
 use crate::db;
 use crate::models::{
-    ActivityBlock, MatchField, MatchOperator, ProjectMatchRule, RuleStat, Settings, SuggestedEntry,
+    ActivityBlock, MatchField, MatchOperator, Project, ProjectMatchRule, RuleStat, Settings,
+    SubGroupWarning, SuggestedEntry,
 };
 
 /// A rule with its conditions prepared for evaluation.
@@ -267,6 +268,122 @@ pub fn compute_rule_stats(
     stats
 }
 
+// ── Sub-group (ticket) extraction ─────────────────────────────────────────────
+//
+// This is a *labelling* pass that runs after a rule has already been chosen by
+// `first_match`. It deliberately has no influence on which project a block
+// belongs to, so a mistyped pattern can never reclassify work — the worst case
+// is a missing ticket breakdown.
+
+/// A compiled sub-group pattern.
+#[derive(Debug, Clone)]
+pub struct SubGroupPattern {
+    regex: regex::Regex,
+    /// True when the pattern declares at least one capture group.
+    /// `captures_len()` counts group 0, so anything above 1 is a real group.
+    uses_group_one: bool,
+}
+
+impl SubGroupPattern {
+    /// Compile a pattern.
+    ///
+    /// Matching is case-insensitive: window titles vary in casing far more than
+    /// ticket keys do. The error is returned rather than swallowed so a typo is
+    /// visible in the UI and to the MCP caller.
+    pub fn compile(pattern: &str) -> Result<Self, String> {
+        let regex = regex::RegexBuilder::new(pattern.trim())
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            uses_group_one: regex.captures_len() > 1,
+            regex,
+        })
+    }
+
+    /// The first capture across `titles`, or `None` if nothing matches.
+    ///
+    /// Group 1 is used when the pattern declares a group (so `ELMS-(\d+)`
+    /// yields the bare number when the caller wants it), otherwise the whole
+    /// match — which lets `ELMS-\d+` work without the user adding parentheses.
+    pub fn extract(&self, titles: &[String]) -> Option<String> {
+        for title in titles {
+            let Some(caps) = self.regex.captures(title) else {
+                continue;
+            };
+            let matched = if self.uses_group_one {
+                caps.get(1).or_else(|| caps.get(0))
+            } else {
+                caps.get(0)
+            };
+            if let Some(m) = matched {
+                let text = m.as_str().trim();
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Effective sub-group pattern per rule id.
+///
+/// A rule's own pattern overrides the owning project's. Rules with no pattern at
+/// either level are absent from the map. Compile failures come back as warnings
+/// and the rule simply yields no sub-group.
+pub fn resolve_sub_groups(
+    rules: &[ProjectMatchRule],
+    projects: &[Project],
+) -> (std::collections::HashMap<i64, SubGroupPattern>, Vec<SubGroupWarning>) {
+    let project_pattern: std::collections::HashMap<i64, &str> = projects
+        .iter()
+        .filter_map(|p| p.sub_group_pattern.as_deref().map(|pat| (p.id, pat)))
+        .collect();
+
+    let mut compiled = std::collections::HashMap::new();
+    let mut warnings = Vec::new();
+
+    for rule in rules {
+        let pattern = rule
+            .sub_group_pattern
+            .as_deref()
+            .or_else(|| project_pattern.get(&rule.project_id).copied());
+        let Some(pattern) = pattern else { continue };
+        if pattern.trim().is_empty() {
+            continue;
+        }
+        match SubGroupPattern::compile(pattern) {
+            Ok(c) => {
+                compiled.insert(rule.id, c);
+            }
+            Err(error) => warnings.push(SubGroupWarning {
+                rule_id: rule.id,
+                project_id: rule.project_id,
+                pattern: pattern.to_string(),
+                error,
+            }),
+        }
+    }
+
+    (compiled, warnings)
+}
+
+/// The sub-group key for a block already claimed by `rule_id`.
+///
+/// Scans the same candidate titles that rule matching uses (every title seen in
+/// the merged block, plus the IDE project key), so a ticket glimpsed in a tab
+/// that has since closed is still attributed.
+pub fn sub_group_for_block(
+    block: &ActivityBlock,
+    rule_id: i64,
+    patterns: &std::collections::HashMap<i64, SubGroupPattern>,
+    settings: &Settings,
+) -> Option<String> {
+    let pattern = patterns.get(&rule_id)?;
+    pattern.extract(&candidate_titles(block, settings))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +411,7 @@ mod tests {
             name: format!("rule {id}"),
             position,
             conditions,
+            sub_group_pattern: None,
         }
     }
 
@@ -502,5 +620,152 @@ mod tests {
         let dead = stats.iter().find(|s| s.rule_id == 3).unwrap();
         assert_eq!(dead.hits, 0);
         assert!(dead.overlaps_with.is_empty());
+    }
+
+    // ── Sub-group (ticket) extraction ─────────────────────────────────────────
+
+    fn project(id: i64, pattern: Option<&str>) -> Project {
+        Project {
+            id,
+            name: format!("project {id}"),
+            color: "#6366f1".to_string(),
+            archived_at: None,
+            parent_id: None,
+            sub_group_pattern: pattern.map(str::to_string),
+        }
+    }
+
+    fn with_pattern(
+        mut r: ProjectMatchRule,
+        pattern: &str,
+    ) -> ProjectMatchRule {
+        r.sub_group_pattern = Some(pattern.to_string());
+        r
+    }
+
+    fn titles(list: &[&str]) -> Vec<String> {
+        list.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn a_pattern_without_a_group_returns_the_whole_match() {
+        let p = SubGroupPattern::compile("ELMS-\\d+").unwrap();
+        assert_eq!(
+            p.extract(&titles(&["[ELMS-5813] Waitlist - Jira"])),
+            Some("ELMS-5813".to_string())
+        );
+    }
+
+    #[test]
+    fn a_pattern_with_a_group_returns_group_one() {
+        let p = SubGroupPattern::compile("ELMS-(\\d+)").unwrap();
+        assert_eq!(
+            p.extract(&titles(&["[ELMS-5813] Waitlist - Jira"])),
+            Some("5813".to_string())
+        );
+    }
+
+    #[test]
+    fn extraction_is_case_insensitive() {
+        let p = SubGroupPattern::compile("ELMS-\\d+").unwrap();
+        assert_eq!(
+            p.extract(&titles(&["elms-5813 - Jira"])),
+            Some("elms-5813".to_string())
+        );
+    }
+
+    #[test]
+    fn extraction_scans_every_title_in_the_block() {
+        let p = SubGroupPattern::compile("ELMS-\\d+").unwrap();
+        // The ticket is only in an earlier title; the representative one is a tab.
+        assert_eq!(
+            p.extract(&titles(&["[ELMS-5815] Waitlist - Jira", "New tab"])),
+            Some("ELMS-5815".to_string())
+        );
+        assert_eq!(p.extract(&titles(&["New tab", "Inbox"])), None);
+    }
+
+    #[test]
+    fn a_rules_pattern_overrides_its_projects() {
+        let rules = [with_pattern(
+            rule(1, 7, 0, vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "jira", false)]),
+            "ELMS-\\d+",
+        )];
+        let projects = [project(7, Some("PROJ-\\d+"))];
+
+        let (patterns, warnings) = resolve_sub_groups(&rules, &projects);
+        assert!(warnings.is_empty());
+        assert_eq!(
+            patterns[&1].extract(&titles(&["[ELMS-9] x - Jira"])),
+            Some("ELMS-9".to_string())
+        );
+    }
+
+    #[test]
+    fn a_rule_without_a_pattern_falls_back_to_its_projects() {
+        let rules = [rule(
+            1,
+            7,
+            0,
+            vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "jira", false)],
+        )];
+        let projects = [project(7, Some("ELMS-\\d+"))];
+
+        let (patterns, warnings) = resolve_sub_groups(&rules, &projects);
+        assert!(warnings.is_empty());
+        assert_eq!(
+            patterns[&1].extract(&titles(&["[ELMS-9] x - Jira"])),
+            Some("ELMS-9".to_string())
+        );
+    }
+
+    #[test]
+    fn a_project_without_a_pattern_yields_no_sub_group() {
+        let rules = [rule(
+            1,
+            7,
+            0,
+            vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "jira", false)],
+        )];
+        let (patterns, warnings) = resolve_sub_groups(&rules, &[project(7, None)]);
+        assert!(patterns.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn an_invalid_pattern_warns_and_never_breaks_matching() {
+        // Unbalanced bracket: a plausible typo. The rule must still classify the
+        // block; only the ticket breakdown is lost, and the reason is reported.
+        let b = block("brave", &["[ELMS-5813] Waitlist - Jira"]);
+        let rules = [with_pattern(
+            rule(1, 7, 0, vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "jira", false)]),
+            "ELMS-(\\d+",
+        )];
+
+        let (patterns, warnings) = resolve_sub_groups(&rules, &[]);
+        assert!(patterns.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].rule_id, 1);
+        assert_eq!(warnings[0].pattern, "ELMS-(\\d+");
+
+        let compiled = compile(&rules);
+        assert_eq!(compute_matches(&[b], &compiled, &settings()).len(), 1);
+    }
+
+    #[test]
+    fn sub_group_for_block_reads_the_candidate_titles() {
+        let b = block("brave", &["[ELMS-5815] Waitlist - Jira", "New tab"]);
+        let rules = [with_pattern(
+            rule(1, 7, 0, vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "jira", false)]),
+            "ELMS-\\d+",
+        )];
+        let (patterns, _) = resolve_sub_groups(&rules, &[]);
+
+        assert_eq!(
+            sub_group_for_block(&b, 1, &patterns, &settings()),
+            Some("ELMS-5815".to_string())
+        );
+        // A rule with no resolved pattern yields nothing rather than panicking.
+        assert_eq!(sub_group_for_block(&b, 999, &patterns, &settings()), None);
     }
 }

@@ -52,6 +52,8 @@ export const useSettingsStore = defineStore('settings', () => {
     layoutWindowSummaryWidth: 220,
     layoutProjectSummaryWidth: 220,
     autoAcceptSuggested: false,
+    dailyReminderEnabled: false,
+    dailyReminderTime: '17:00',
     mcpAllowWrites: true,
   })
   const colourScheme = ref<ColourScheme>(

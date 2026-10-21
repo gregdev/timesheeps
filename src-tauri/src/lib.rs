@@ -10,6 +10,7 @@ pub mod matcher;
 pub mod models;
 pub mod reporting;
 mod nl_query;
+mod reminder;
 mod timer;
 
 use std::sync::{Arc, Mutex};
@@ -30,6 +31,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
@@ -122,6 +124,9 @@ pub fn run() {
 
             // Start the timer ticker (taskbar progress + frontend events)
             timer::start_ticker(handle.clone());
+
+            // Daily timesheet reminder (fires once per local day, when enabled)
+            reminder::start(handle.clone());
 
             // Check for updates silently in the background
             let update_handle = app.handle().clone();

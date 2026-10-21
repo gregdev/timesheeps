@@ -207,6 +207,11 @@ pub struct Settings {
     /// When true, suggested entries from project match rules are automatically
     /// converted to time entries without requiring manual acceptance.
     pub auto_accept_suggested: bool,
+    /// When true, a prompt pops up once per local day at `daily_reminder_time`
+    /// showing the hours tracked so far, as a nudge to fill in the timesheet.
+    pub daily_reminder_enabled: bool,
+    /// Local time of day (`HH:MM`, 24-hour) at which the daily reminder fires.
+    pub daily_reminder_time: String,
     /// When false, the MCP server refuses every write tool, making the Claude
     /// integration read-only. Defaults to on. There is deliberately no MCP tool
     /// that can change this — Claude must not be able to unlock itself.
@@ -233,6 +238,10 @@ impl Default for Settings {
             layout_window_summary_width: 220,
             layout_project_summary_width: 220,
             auto_accept_suggested: false,
+            // Off by default: a reminder that appears unbidden on upgrade is
+            // exactly what the toggle exists to prevent.
+            daily_reminder_enabled: false,
+            daily_reminder_time: "17:00".to_string(),
             mcp_allow_writes: true,
         }
     }

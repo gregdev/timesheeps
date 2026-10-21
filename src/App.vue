@@ -8,11 +8,12 @@
   import { useDayStore } from './stores/day'
   import { useTimerStore } from './stores/timer'
   import IdlePrompt from './components/IdlePrompt.vue'
+  import DailyReminder from './components/DailyReminder.vue'
   import TooltipOverlay from './components/TooltipOverlay.vue'
   import ContextMenu from './components/ContextMenu.vue'
   import ScreenRecordingBanner from './components/ScreenRecordingBanner.vue'
   import TimerWidget from './components/TimerWidget.vue'
-  import type { IdleReturnEvent } from './schemas'
+  import type { DailyReminderEvent, IdleReturnEvent } from './schemas'
 
   const route = useRoute()
   const router = useRouter()
@@ -21,6 +22,7 @@
   const dayStore = useDayStore()
   const timerStore = useTimerStore()
   const idleEvent = ref<IdleReturnEvent | null>(null)
+  const dailyReminder = ref<DailyReminderEvent | null>(null)
   const isMiniView = computed(() => route.path === '/timer-popup')
   const searchQuery = ref('')
   const searchInput = ref<HTMLInputElement | null>(null)
@@ -91,6 +93,26 @@
 
   let unlistenFocus: (() => void) | null = null
   let unlistenIdle: (() => void) | null = null
+  let unlistenReminder: (() => void) | null = null
+
+  /**
+   * The backend brings the window forward before emitting, but it cannot touch
+   * the route without reloading the webview (which would race this listener),
+   * so leaving the compact tray popup is the frontend's job.
+   */
+  function onDailyReminder(event: DailyReminderEvent) {
+    if (route.path === '/timer-popup') {
+      router.replace('/')
+    }
+
+    dailyReminder.value = event
+  }
+
+  function openTimelineFromReminder() {
+    dailyReminder.value = null
+    dayStore.goToday()
+    router.push('/')
+  }
 
   onMounted(async () => {
     // ── Full init for main window ───────────────────────────────────────
@@ -113,12 +135,16 @@
     unlistenIdle = await listen<IdleReturnEvent>('idle-return', (event) => {
       idleEvent.value = event.payload
     })
+    unlistenReminder = await listen<DailyReminderEvent>('daily-reminder', (event) => {
+      onDailyReminder(event.payload)
+    })
   })
 
   onUnmounted(() => {
     window.removeEventListener('keydown', onKeyDown)
     unlistenFocus?.()
     unlistenIdle?.()
+    unlistenReminder?.()
     timerStore.destroy()
   })
 </script>
@@ -227,6 +253,12 @@
     </main>
 
     <IdlePrompt v-if="idleEvent" :event="idleEvent" @dismiss="idleEvent = null" />
+    <DailyReminder
+      v-if="dailyReminder"
+      :event="dailyReminder"
+      @dismiss="dailyReminder = null"
+      @open="openTimelineFromReminder"
+    />
     <TooltipOverlay />
     <ContextMenu />
   </div>

@@ -62,6 +62,7 @@ src-tauri/
     activity.rs       # Background Win32 polling loop (tokio), idle detection, exe path capture
     calendar.rs       # Microsoft 365 OAuth + Graph
     nl_query.rs       # Natural-language → search-token translation (+ the only pre-existing tests)
+    reminder.rs       # Daily timesheet reminder: scheduler, prompt payload, native toast
     timer.rs          # In-memory timer
     commands/
       activity.rs           # get_activity_for_day, get_window_summary_for_day, search, deletes
@@ -164,6 +165,54 @@ src/
 `min_duration_secs` is **deleted, not absorbed**: `Slack 20s | brave 10s | Slack 1m` yields the 1m
 block alone (the 20s is lost), whereas `Slack 70s | brave 10s | Slack 90s` becomes one 170s block.
 Interstitial apps are only bridged when _both_ same-app runs clear the minimum.
+
+### Daily timesheet reminder (`reminder.rs` + `src/components/DailyReminder.vue`)
+
+- `reminder::start(app)` spawns a tokio loop ticking every `TICK_SECS` (30s), re-reading
+  `db::get_settings` each tick so enabling/disabling/retiming needs no restart — same shape as
+  `activity::start_polling`
+- Fires when `daily_reminder_enabled` and local time ≥ `daily_reminder_time` and the day has not
+  already been claimed. Persisted time is stored in the `settings` table under
+  `daily_reminder_last_fired`; it is **bookkeeping, deliberately not a `Settings` field**, so the
+  auto-saving settings form can never round-trip and clobber it
+- A malformed `daily_reminder_time` yields no popup at all (never a fallback time)
+- The payload is built **before** the day is claimed, so a failure retries next tick instead of
+  silently skipping; the claim is written **before** emitting, so a tick can never double-fire
+- Totals come from `reporting::classify_range(…, GroupBy::Project)` — the same ignore-rule →
+  merge → min-duration → match-rule pipeline the timeline uses, never raw `SUM` over
+  `activity_raw`. It reports tracked secs, logged entry secs, and per-project rows
+- Delivery is a `daily-reminder` Tauri event consumed in `App.vue` (mirroring `idle-return` /
+  `IdlePrompt`), which renders the `DailyReminder` modal
+- A native toast (via `tauri-plugin-notification`) is sent **only when the window had to be
+  brought forward** — `reveal_window` returns that boolean. When the app is already on screen the
+  modal is the whole message; when it was hidden in the tray the toast is the record in the Action
+  Center. A toast failure is logged, never propagated, because permission can legitimately be
+  refused and the prompt has already been shown
+- **Windows toasts only carry the app's name and icon in an installed build.** Under
+  `pnpm tauri dev` they are attributed to Windows PowerShell — that is the plugin, not a bug. The
+  plugin needs Rust ≥ 1.90. `notification:default` is in `capabilities/default.json` only so a
+  *frontend* caller would work too; Rust's `app.notification()` is not ACL-gated, and no
+  `@tauri-apps/plugin-notification` JS dependency is installed
+- `reveal_window` restores the 1100×780 window only when it is hidden or still at the tray
+  popup's 280 px width, so a reminder while the user is working does not move their layout
+- Navigation back off `/timer-popup` happens in `App.vue`, not Rust: a `location.replace` eval
+  would reload the webview and race the event listener
+- Enabling the reminder after today's time has passed fires it on the next tick (the day is
+  unclaimed), which is intentional feedback but means toggling it in Settings can pop it up
+- `daily_reminder_enabled` defaults to **false**: a reminder appearing unbidden on upgrade is what
+  the toggle exists to prevent
+
+### Auto-accepting suggestions (`src/stores/day.ts`)
+
+- The poller keeps a row **open** while a window stays focused, moving `ended_at` forward every
+  20s. An active session's suggestion therefore always ends "now"
+- A suggestion is only auto-accepted once it has been quiet for `AUTO_ACCEPT_SETTLE_MINUTES` (2).
+  Accepting it earlier freezes the sliver recorded so far into an entry, and every later refresh
+  then rejects the grown suggestion as an overlap — that is what produced 1-minute entries for
+  20-minute sessions
+- `loadDay` can run twice concurrently (the 30s interval plus the `activity-updated` event).
+  `autoAccepting` is a plain, non-reactive guard: without it, overlapping passes both see the same
+  suggestion as unclaimed and create a duplicate entry for it
 
 ### Window Activity panel (`db::get_window_summary_for_date`)
 
@@ -275,6 +324,8 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 - `snap_minutes`: 5
 - `window_summary_min_secs`: 60
 - `auto_accept_suggested`: false
+- `daily_reminder_enabled`: false
+- `daily_reminder_time`: "17:00"
 - `mcp_allow_writes`: **true** — the MCP write gate; the persisted row usually exists, don't assume
   the default
   These are the **code** defaults; the persisted `settings` table can hold different user-chosen values

@@ -303,6 +303,8 @@ fn seed_default_settings(conn: &Connection) -> Result<()> {
         ("pay_schedule_frequency", defaults.pay_schedule_frequency.clone()),
         ("pay_schedule_anchor", defaults.pay_schedule_anchor.clone()),
         ("auto_accept_suggested", if defaults.auto_accept_suggested { "1" } else { "0" }.to_string()),
+        ("daily_reminder_enabled", if defaults.daily_reminder_enabled { "1" } else { "0" }.to_string()),
+        ("daily_reminder_time", defaults.daily_reminder_time.clone()),
         ("mcp_allow_writes", if defaults.mcp_allow_writes { "1" } else { "0" }.to_string()),
     ];
     for (key, val) in pairs {
@@ -1061,6 +1063,8 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         layout_window_summary_width: get("layout_window_summary_width", d.layout_window_summary_width),
         layout_project_summary_width: get("layout_project_summary_width", d.layout_project_summary_width),
         auto_accept_suggested: get_bool("auto_accept_suggested", d.auto_accept_suggested),
+        daily_reminder_enabled: get_bool("daily_reminder_enabled", d.daily_reminder_enabled),
+        daily_reminder_time: get_str("daily_reminder_time", &d.daily_reminder_time),
         mcp_allow_writes: get_bool("mcp_allow_writes", d.mcp_allow_writes),
     })
 }
@@ -1084,6 +1088,8 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
         ("layout_window_summary_width", s.layout_window_summary_width.to_string()),
         ("layout_project_summary_width", s.layout_project_summary_width.to_string()),
         ("auto_accept_suggested", if s.auto_accept_suggested { "1" } else { "0" }.to_string()),
+        ("daily_reminder_enabled", if s.daily_reminder_enabled { "1" } else { "0" }.to_string()),
+        ("daily_reminder_time", s.daily_reminder_time.clone()),
         ("mcp_allow_writes", if s.mcp_allow_writes { "1" } else { "0" }.to_string()),
     ];
     for (key, val) in pairs {

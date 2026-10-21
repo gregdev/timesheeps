@@ -127,6 +127,10 @@ export const SettingsSchema = z.object({
   layoutWindowSummaryWidth: z.number(),
   layoutProjectSummaryWidth: z.number(),
   autoAcceptSuggested: z.boolean(),
+  /** When true, a prompt appears once a day at `dailyReminderTime`. */
+  dailyReminderEnabled: z.boolean(),
+  /** Local time of day (`HH:MM`, 24-hour) for the daily reminder. */
+  dailyReminderTime: z.string(),
   /**
    * When false, the MCP server refuses to create or change anything, including
    * projects, match rules and time entries. Claude cannot change this itself.
@@ -141,6 +145,31 @@ export const IdleReturnEventSchema = z.object({
   idleEndedAt: z.string(),
 })
 export type IdleReturnEvent = z.infer<typeof IdleReturnEventSchema>
+
+/** One project row in the daily timesheet reminder. */
+export const DailyReminderProjectSchema = z.object({
+  projectId: z.number(),
+  projectName: z.string(),
+  color: z.string(),
+  /** Merged activity attributed to the project today. */
+  trackedSecs: z.number(),
+  /** Time entries logged against the project today. */
+  loggedSecs: z.number(),
+})
+export type DailyReminderProject = z.infer<typeof DailyReminderProjectSchema>
+
+/**
+ * Payload of the `daily-reminder` event emitted by the backend scheduler.
+ * Totals come from the same pipeline the timeline uses, not raw activity rows.
+ */
+export const DailyReminderEventSchema = z.object({
+  /** Local `YYYY-MM-DD`. */
+  date: z.string(),
+  trackedSecs: z.number(),
+  loggedSecs: z.number(),
+  projects: z.array(DailyReminderProjectSchema),
+})
+export type DailyReminderEvent = z.infer<typeof DailyReminderEventSchema>
 
 export const WindowSummaryItemSchema = z.object({
   appName: z.string(),

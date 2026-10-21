@@ -390,6 +390,45 @@
               instead of showing a dashed suggestion that needs to be accepted.
             </p>
           </div>
+
+          <div class="form-group form-group--inline">
+            <label class="checkbox-label">
+              <input
+                v-model="form.dailyReminderEnabled"
+                type="checkbox"
+                @change="trackField('dailyReminderEnabled')"
+              />
+              Daily timesheet reminder
+              <Transition name="check">
+                <span v-if="savedField === 'dailyReminderEnabled'" class="field-check">✓</span>
+              </Transition>
+            </label>
+            <p class="field-hint">
+              Pops up once a day with the hours tracked so far, as a reminder to check today's
+              timesheet.
+            </p>
+          </div>
+
+          <div class="reminder-time">
+            <div class="form-group">
+              <label for="daily-reminder-time">
+                Reminder time
+                <Transition name="check">
+                  <span v-if="savedField === 'dailyReminderTime'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <input
+                id="daily-reminder-time"
+                v-model="form.dailyReminderTime"
+                type="time"
+                :disabled="!form.dailyReminderEnabled"
+                @change="trackField('dailyReminderTime')"
+              />
+
+              <p class="field-hint">Local time. The window is brought forward when it fires.</p>
+            </div>
+          </div>
         </section>
 
         <section class="settings-section">
@@ -758,6 +797,15 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+  }
+
+  .reminder-time {
+    max-width: 220px;
+  }
+
+  .reminder-time input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
 
   .split-apps {

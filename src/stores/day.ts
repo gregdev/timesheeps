@@ -13,6 +13,22 @@ import type {
   WindowSummaryItem,
 } from '../schemas'
 
+/**
+ * How long a suggestion must be quiet before it may be auto-accepted, in
+ * minutes.
+ *
+ * The poller keeps a row *open* while a window stays focused: every tick moves
+ * `ended_at` forward, so an active session's suggestion always ends "now".
+ * Auto-accepting that snapshot writes an entry for however much had been
+ * recorded at that instant (often a single minute), and every later refresh
+ * then skips the grown suggestion because it overlaps the entry just created —
+ * leaving a permanent 1-minute entry for a 20-minute session. Waiting for the
+ * block to stop moving means the entry covers the whole session.
+ *
+ * Comfortably larger than the 20s poll interval and the 30s UI refresh.
+ */
+const AUTO_ACCEPT_SETTLE_MINUTES = 2
+
 export const useDayStore = defineStore('day', () => {
   const selectedDate = ref(localDateKey(new Date()))
   const currentDate = ref(localDateKey(new Date()))
@@ -23,6 +39,10 @@ export const useDayStore = defineStore('day', () => {
   const calendarEvents = ref<CalendarEvent[]>([])
   const loading = ref(false)
   const loadError = ref<string | null>(null)
+  // `loadDay` can be in flight twice (the 30s interval plus the poller's
+  // `activity-updated` event). Two overlapping passes would both see the same
+  // suggestion as unclaimed and each create an entry for it.
+  let autoAccepting = false
 
   const isViewingToday = computed(() => selectedDate.value === currentDate.value)
 
@@ -59,54 +79,66 @@ export const useDayStore = defineStore('day', () => {
       // Auto-accept suggestions if enabled
       const settingsStore = useSettingsStore()
 
-      if (settingsStore.settings.autoAcceptSuggested && suggestions.length > 0) {
-        const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes()
-        // Ranges accepted in this pass count as "existing" so two overlapping
-        // suggestions cannot both become entries.
-        const claimed: { start: number; end: number }[] = []
-        let created = false
+      if (settingsStore.settings.autoAcceptSuggested && suggestions.length > 0 && !autoAccepting) {
+        autoAccepting = true
 
-        for (const s of suggestions) {
-          const startMin = isoToMinutes(s.startedAt)
-          const endMin = isoToMinutes(s.endedAt)
+        try {
+          const now = new Date()
+          const nowMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60
+          // Ranges accepted in this pass count as "existing" so two overlapping
+          // suggestions cannot both become entries.
+          const claimed: { start: number; end: number }[] = []
+          let created = false
 
-          if (endMin <= startMin) {
-            continue
-          }
+          for (const s of suggestions) {
+            const startMin = isoToMinutes(s.startedAt)
+            const endMin = isoToMinutes(s.endedAt)
 
-          // Only auto-create entries that don't overlap existing ones
-          const overlapsEntry = entries.some(
-            (e) => e.startMinutes < endMin && e.endMinutes > startMin,
-          )
-          const overlapsClaimed = claimed.some((c) => c.start < endMin && c.end > startMin)
+            if (endMin <= startMin) {
+              continue
+            }
 
-          if (overlapsEntry || overlapsClaimed) {
-            continue
-          }
-          // Don't auto-create entries that end in the future (still in progress)
-          if (endMin > nowMinutes + 5) {
-            continue
-          }
+            // Still being recorded — the poller extends this block's end on
+            // every tick, so its length is not final yet. Accepting it now
+            // would freeze the sliver recorded so far into an entry that then
+            // blocks the real span as an "overlap" on every later refresh.
+            // A suggestion ending in the future (clock skew) also lands here.
+            if (nowMinutes - endMin < AUTO_ACCEPT_SETTLE_MINUTES) {
+              continue
+            }
 
-          try {
-            await api.createTimeEntry(
-              selectedDate.value,
-              s.projectId,
-              Math.round(startMin),
-              Math.round(endMin),
-              '',
+            // Only auto-create entries that don't overlap existing ones
+            const overlapsEntry = entries.some(
+              (e) => e.startMinutes < endMin && e.endMinutes > startMin,
             )
-            claimed.push({ start: startMin, end: endMin })
-            created = true
-          } catch (e) {
-            console.error('[timesheeps] auto-accept failed:', e)
-          }
-        }
+            const overlapsClaimed = claimed.some((c) => c.start < endMin && c.end > startMin)
 
-        // Reload to pick up newly created entries; `suggestedEntries` filters
-        // out anything that now overlaps, so no re-fetch is needed.
-        if (created) {
-          timeEntries.value = await api.getTimeEntriesForDay(selectedDate.value)
+            if (overlapsEntry || overlapsClaimed) {
+              continue
+            }
+
+            try {
+              await api.createTimeEntry(
+                selectedDate.value,
+                s.projectId,
+                Math.round(startMin),
+                Math.round(endMin),
+                '',
+              )
+              claimed.push({ start: startMin, end: endMin })
+              created = true
+            } catch (e) {
+              console.error('[timesheeps] auto-accept failed:', e)
+            }
+          }
+
+          // Reload to pick up newly created entries; `suggestedEntries` filters
+          // out anything that now overlaps, so no re-fetch is needed.
+          if (created) {
+            timeEntries.value = await api.getTimeEntriesForDay(selectedDate.value)
+          }
+        } finally {
+          autoAccepting = false
         }
       }
     } catch (err) {

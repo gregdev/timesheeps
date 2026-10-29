@@ -4,6 +4,7 @@
   import { format, parseISO } from 'date-fns'
   import DayNav from '../components/DayNav.vue'
   import TimelineCanvas from '../components/TimelineCanvas.vue'
+  import TimelineZoomControl from '../components/TimelineZoomControl.vue'
   import WindowSummary from '../components/WindowSummary.vue'
   import ProjectSummary from '../components/ProjectSummary.vue'
   import { useDayStore } from '../stores/day'
@@ -180,6 +181,7 @@
     <div class="day-nav-area">
       <DayNav />
       <div class="day-actions">
+        <TimelineZoomControl />
         <button
           class="btn-ghost copy-btn"
           :title="copied ? 'Copied!' : 'Copy day summary (T = today, ←/→ = navigate)'"

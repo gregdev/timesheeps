@@ -122,12 +122,86 @@ src/
 
 ### Timeline math
 
-- `HOUR_HEIGHT = 160` px per hour
-- `minuteToY(min) = (min - startMin) / 60 * HOUR_HEIGHT`
+- `HOUR_HEIGHT = 160` px per hour is the **100% zoom** value; the live value is the shared
+  `hourHeight` ref in `composables/useTimeline.ts` (module-level, so the ruler and both tracks
+  cannot disagree). Ctrl+wheel over the timeline body zooms about the pointer, clamped to
+  60–480 px/hour and persisted in `localStorage` (view state — deliberately not a `Settings`
+  field). Because `hourHeight` is a ref, `minuteToY`/`yToMinute`/`totalHeight` are only reactive
+  when **read inside a computed**; a plain function call in a template expression still tracks,
+  but anything cached by hand must read `hourHeight.value`
+- `minuteToY(min) = (min - startMin) / 60 * hourHeight`
+- `timelineStartHour`/`timelineEndHour` are a **preference, not a bound**: `startMin`/`endMin`
+  widen to fit the day's entries, suggestions and activity blocks (rounded to whole hours, clamped
+  to 0:00–24:00) so recorded work is never invisible. Widening only ever adds hours. `isExpanded`
+  drives the explanation in the ruler tooltip; `preferredStartMin`/`preferredEndMin` are the raw
+  Settings values. Only the day timeline reads this geometry — `useTimeline()` elsewhere is used
+  purely for `formatDuration`/`minutesToTime`/`isoToMinutes`
+- The zoom control (`TimelineZoomControl`) lives in `TimelineView`'s `.day-actions` toolbar beside
+  Copy, **not** in the column headers: the 44 px ruler gutter is narrower than the control, so
+  anything placed there overlaps the "Activity" title. It is always visible and reads as a
+  percentage of the 160 px/hour default; clicking the value resets to 100%
 - Drag/resize and the hover tooltip snap to `settings.snapMinutes` (default 5)
 - `isoToMinutes(iso)` converts UTC ISO string → local-time minutes via `new Date(iso).getHours() * 60 + ...`
 - Day keys are always **local** dates. Use `localDateKey()` from `composables/useFormat.ts`;
-  `Date#toISOString().slice(0, 10)` gives the UTC date and is wrong for evening local times.
+  `Date#toISOString().slice(0, 10)` gives the UTC date and is wrong for evening local times
+- Short entries have a **minimum rendered height of 8px** (`TimeBlockItem`), and the resize
+  handles shrink to `height/4` so a small block keeps a clickable body. Two entries a few minutes
+  apart still overlap visually at low zoom — that is what zoom is for; a click there lands on
+  whichever block is later in DOM order
+
+### Entry selection and merging
+
+- `ctrl/cmd+click` toggles one entry, `shift+click` selects the range from the anchor, plain click
+  selects just that entry, `Escape` clears. State lives in
+  `composables/useEntrySelection.ts` (module-level), pruned whenever the entry list changes and
+  cleared on a date change
+- **A single click never opens the editor** — that is a double-click, so a stray click cannot
+  interrupt what the user was doing. The `dblclick` handler sits on the outer `.time-block` (not
+  `.block-body`) because a 2-minute entry is all resize handle and has no reliable body target
+- The entry hover tooltip (`data-tooltip`) carries project name, time window + duration, the note
+  when present, and the gesture hints. The block body only prints those lines above certain
+  heights, so a short entry would otherwise be unidentifiable without opening the editor
+- The click handler lives on `.block-body`, but `TimeBlockItem` routes **handle** presses through
+  the same `select` event, so a 2-minute block (all handle, no body) is still selectable
+- Editing a single entry is: double-click the block, or right-click → "Edit entry…"
+- `Del` with a selection opens the delete confirmation (`ConfirmDialog`). The handler skips
+  `INPUT`/`TEXTAREA`/`contenteditable` targets and refuses to stack on an open modal, so it cannot
+  fire while typing in the timer note or the picker's project search
+- Deletion confirms through `components/ConfirmDialog.vue`, not `window.confirm`: the native box
+  cannot be themed and blocks the whole webview. It mirrors `ProjectPickerModal`'s styling; keep the
+  two in step. **Focus starts on Cancel** and Enter is left to the focused button, so a reflexive
+  Enter cancels rather than deleting. Its Escape listener is registered in the capture phase so it
+  closes the dialog instead of reaching the timeline's clear-selection handler
+- Pressing empty track clears the selection — it also starts a create-drag, and a stale
+  "3 selected" in the header would keep offering Merge
+- Bulk **Merge** (header button) folds the selection into one entry spanning earliest start to
+  latest end. `dayStore.mergeBlocker` refuses mixed projects and any span that would cover an
+  entry left out of the selection; the header then disables the button with that reason as its
+  tooltip. Gaps inside the span become counted time — that is the point of the action, not a bug
+- `Merge with previous entry` (right-click) is the single-pair version and is stricter: adjacent
+  entries only, same project, non-overlapping
+- Right-clicking an entry that is part of a multi-selection opens the **bulk** menu instead
+  (Merge N / Delete N / Clear selection). Merge is rendered disabled when `mergeBlocker` refuses,
+  rather than being offered and rejected. Bulk actions are _emitted_ to `TimelineCanvas`, which owns
+  the confirm dialogs and the inline error, so the two merge paths cannot drift- Right-clicking an entry that is _not_ already selected highlights it (and anchors it) so it is
+  clear which entry the menu acts on, and the highlight is dropped when the menu closes. That is
+  tracked by a plain `contextMenuSelection` flag in `EntryTrack` — never a ref — so a deliberate
+  multi-selection survives the bulk menu. The clearing watcher uses `flush: 'sync'` because the menu
+  closes on mousedown and the next event may already be another entry's contextmenu
+- `.col-headers` has a **fixed 32px height**, not content-driven: the 19.4px selection buttons are
+  taller than the bare "My Time" label, so the row used to grow ~4px on selection and shove the
+  timeline body down under the cursor. `.col-header` is a flex row with `padding: 0 8px` — vertical
+  centring replaces the old 6px padding so the fixed height and the `border-left` still fill the row- `TimeBlockItem.startDrag` returns early for `e.button !== 0`. Without that guard a right-click's
+  mousedown started a "move" drag whose mouseup was read as a click, opening the editor _and_ the
+  context menu at the same time.
+
+### Day navigation (`DayNav.vue`)
+
+- A **Back to Today** button appears only when `dayStore.isViewingToday` is false, calling
+  `dayStore.goToday`. On today the date label carries a "Today" badge instead
+- The relative distance ("6 days ago") is a separate `.relative-badge` between the date picker and
+  the button — never inside the button label. "Back to Today (6 days ago)" reads as though _today_
+  were six days ago; on its own the badge clearly describes the date on screen
 
 ### Rust activity polling
 
@@ -191,7 +265,7 @@ Interstitial apps are only bridged when _both_ same-app runs clear the minimum.
 - **Windows toasts only carry the app's name and icon in an installed build.** Under
   `pnpm tauri dev` they are attributed to Windows PowerShell — that is the plugin, not a bug. The
   plugin needs Rust ≥ 1.90. `notification:default` is in `capabilities/default.json` only so a
-  *frontend* caller would work too; Rust's `app.notification()` is not ACL-gated, and no
+  _frontend_ caller would work too; Rust's `app.notification()` is not ACL-gated, and no
   `@tauri-apps/plugin-notification` JS dependency is installed
 - `reveal_window` restores the 1100×780 window only when it is hidden or still at the tray
   popup's 280 px width, so a reminder while the user is working does not move their layout
@@ -213,6 +287,11 @@ Interstitial apps are only bridged when _both_ same-app runs clear the minimum.
 - `loadDay` can run twice concurrently (the 30s interval plus the `activity-updated` event).
   `autoAccepting` is a plain, non-reactive guard: without it, overlapping passes both see the same
   suggestion as unclaimed and create a duplicate entry for it
+- Manual cleanup is a right-click on an entry → "Merge with previous entry"
+  (`dayStore.mergeWithPrevious`). It only merges **adjacent** entries of the same project (nothing
+  between them, non-overlapping), keeps the earlier entry's id and start, extends its end, and keeps
+  the earlier note unless it is blank. The menu item is only offered when the pair qualifies, and the
+  store re-checks before writing because the entries can change while the menu is open
 
 ### Window Activity panel (`db::get_window_summary_for_date`)
 
@@ -240,6 +319,11 @@ Interstitial apps are only bridged when _both_ same-app runs clear the minimum.
 - Conditions with blank values are dropped at compile time, so a rule can never match everything
 - `get_rule_stats` returns per-rule hits / matched minutes / overlaps, which drives the "never matches"
   and "overlaps" warnings on the Projects page
+- `compute_suggestions` bridges same-project matches across gaps of up to `suggestion_gap_secs`
+  (default 300). Merging only on **contact** was wrong: the poller leaves ~20 s between rows on
+  every window switch, so an editor ↔ browser session produced one suggestion — and, with
+  auto-accept on, one entry — per switch. A block claimed by a _different_ project still splits the
+  run; bridging it would bill that project's minutes to this one's span
 
 ### Search (`db::search`)
 
@@ -302,7 +386,7 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
   emitting `File /a "/oname=timesheeps-mcp.exe" "...\target\release\timesheeps-mcp.exe"` — with no
   `externalBin` in any config. The uninstaller deletes it, so upgrades replace it cleanly
 - Consequently `find_mcp_binary` resolves in installed builds via its first branch, because on
-  Windows `resource_dir()` *is* the executable's directory
+  Windows `resource_dir()` _is_ the executable's directory
 - Do **not** add a `bundle.resources` entry for the sidecar. It was tried and reverted. It is
   redundant (the block above already ships the sidecar) and it fights the build: `tauri-build`
   **hard-fails** when a declared resource path is absent (`resource path ... doesn't exist`), and
@@ -318,6 +402,8 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 
 - `min_duration_secs`: 300
 - `merge_gap_secs`: 120
+- `suggestion_gap_secs`: 300 — how far apart two same-project matches may be and still become one
+  suggested entry. Separate from `merge_gap_secs`, which is about merging _raw rows_ of the same window
 - `idle_timeout_secs`: 300
 - `timeline_start_hour`: 7
 - `timeline_end_hour`: 22
@@ -354,11 +440,15 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 - Dark mode CSS tested visually but not on actual dark OS theme
 - IPC failures are only logged to the console in most stores; the day view surfaces `loadError`
 - Suggestions still respect `min_duration_secs`, so sub-minute visits produce none
+- Entries damaged by the old bottom-edge resize clamp (`end_minutes < start_minutes`) are now
+  rejected at the write path (`db::insert/update_time_entry` bail on an inverted range), and the
+  2026-10-28 rows `1682`/`1686` were repaired by hand to `22:17–22:22` and `22:35–22:40`
+  (end times taken from the underlying raw activity). Any _other_ DB may still contain some
 - `pnpm exec eslint .` is clean across `src/**`, `mcp/**` and `scripts/`. `eslint.config.mjs`
   ignores `**/src-tauri/target/**`, whose codegen asset bundles are single-line minified JS that
   otherwise report "Invalid character" parse errors
 - `pnpm tauri build` **exits 1** on the updater-signing step (`A public key has been found, but no
-  private key` — needs `TAURI_SIGNING_PRIVATE_KEY`). The NSIS installer is still produced; the
+private key` — needs `TAURI_SIGNING_PRIVATE_KEY`). The NSIS installer is still produced; the
   non-zero exit is not a build failure
 - Running the **installed** app while the repo has a newer `SCHEMA_VERSION` downgrades the DB's
   `user_version` stamp, because `run_migrations` sets it unconditionally and never reads

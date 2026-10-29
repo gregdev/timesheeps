@@ -4,6 +4,12 @@ export interface ContextMenuItem {
   label: string
   action: () => void
   danger?: boolean
+  /**
+   * Rendered greyed out and inert. Used for bulk actions that do not apply to
+   * the current selection (e.g. Merge across two projects) — better than
+   * offering the action and refusing it after the click.
+   */
+  disabled?: boolean
 }
 
 // Module-level singleton — one menu open at a time across the whole app

@@ -321,6 +321,32 @@
 
             <div class="form-group">
               <label>
+                Suggested entry gap
+                <Transition name="check">
+                  <span v-if="savedField === 'suggestionGapSecs'" class="field-check">✓</span>
+                </Transition>
+              </label>
+
+              <select
+                v-model.number="form.suggestionGapSecs"
+                @change="trackField('suggestionGapSecs')"
+              >
+                <option :value="0">Never bridge</option>
+                <option :value="60">1 minute</option>
+                <option :value="120">2 minutes</option>
+                <option :value="300">5 minutes</option>
+                <option :value="600">10 minutes</option>
+              </select>
+
+              <p class="field-hint">
+                Matches for the same project separated by less than this become one suggested entry.
+                Switching between apps leaves a short gap, so a small value fragments a work stretch
+                into an entry per switch.
+              </p>
+            </div>
+
+            <div class="form-group">
+              <label>
                 Idle timeout
                 <Transition name="check">
                   <span v-if="savedField === 'idleTimeoutSecs'" class="field-check">✓</span>

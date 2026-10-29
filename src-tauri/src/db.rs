@@ -291,6 +291,10 @@ fn seed_default_settings(conn: &Connection) -> Result<()> {
     let pairs = [
         ("min_duration_secs", defaults.min_duration_secs.to_string()),
         ("merge_gap_secs", defaults.merge_gap_secs.to_string()),
+        (
+            "suggestion_gap_secs",
+            defaults.suggestion_gap_secs.to_string(),
+        ),
         ("idle_timeout_secs", defaults.idle_timeout_secs.to_string()),
         ("timeline_start_hour", defaults.timeline_start_hour.to_string()),
         ("timeline_end_hour", defaults.timeline_end_hour.to_string()),
@@ -894,6 +898,14 @@ pub fn insert_time_entry(
     end_minutes: i64,
     note: &str,
 ) -> Result<TimeEntry> {
+    // An inverted range is never meaningful, and it silently subtracts from the
+    // day's totals. The UI clamps drags, but a clamp bug (or an old build) must
+    // not be able to write one.
+    if end_minutes < start_minutes {
+        anyhow::bail!(
+            "end_minutes ({end_minutes}) must not be before start_minutes ({start_minutes})"
+        );
+    }
     conn.execute(
         "INSERT INTO time_entries (date, project_id, start_minutes, end_minutes, note)
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -918,6 +930,11 @@ pub fn update_time_entry(
     end_minutes: i64,
     note: &str,
 ) -> Result<()> {
+    if end_minutes < start_minutes {
+        anyhow::bail!(
+            "end_minutes ({end_minutes}) must not be before start_minutes ({start_minutes})"
+        );
+    }
     conn.execute(
         "UPDATE time_entries
          SET project_id = ?1, start_minutes = ?2, end_minutes = ?3, note = ?4
@@ -1048,6 +1065,7 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
     Ok(Settings {
         min_duration_secs: get("min_duration_secs", d.min_duration_secs),
         merge_gap_secs: get("merge_gap_secs", d.merge_gap_secs),
+        suggestion_gap_secs: get("suggestion_gap_secs", d.suggestion_gap_secs),
         idle_timeout_secs: get("idle_timeout_secs", d.idle_timeout_secs),
         timeline_start_hour: get("timeline_start_hour", d.timeline_start_hour),
         timeline_end_hour: get("timeline_end_hour", d.timeline_end_hour),
@@ -1073,6 +1091,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
     let pairs = [
         ("min_duration_secs", s.min_duration_secs.to_string()),
         ("merge_gap_secs", s.merge_gap_secs.to_string()),
+        ("suggestion_gap_secs", s.suggestion_gap_secs.to_string()),
         ("idle_timeout_secs", s.idle_timeout_secs.to_string()),
         ("timeline_start_hour", s.timeline_start_hour.to_string()),
         ("timeline_end_hour", s.timeline_end_hour.to_string()),

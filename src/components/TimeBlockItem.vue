@@ -1,16 +1,19 @@
 <script setup lang="ts">
   import { ref, computed, onUnmounted, watch } from 'vue'
   import type { TimeEntry } from '../schemas'
-  import { useTimeline, HOUR_HEIGHT } from '../composables/useTimeline'
+  import { useTimeline } from '../composables/useTimeline'
   import { useProjectsStore } from '../stores/projects'
   import { useDayStore } from '../stores/day'
 
-  const props = defineProps<{ entry: TimeEntry }>()
+  const props = defineProps<{ entry: TimeEntry; selected?: boolean }>()
   const emit = defineEmits<{
     (e: 'edit', entry: TimeEntry): void
+    (e: 'select', entry: TimeEntry, event: MouseEvent): void
+    (e: 'context-menu', entry: TimeEntry, event: MouseEvent): void
   }>()
 
-  const { minuteToY, startMin, endMin, snapMinutes, formatDuration, minutesToTime } = useTimeline()
+  const { minuteToY, startMin, endMin, snapMinutes, hourHeight, formatDuration, minutesToTime } =
+    useTimeline()
   const projectsStore = useProjectsStore()
   const dayStore = useDayStore()
 
@@ -22,7 +25,36 @@
   const localEnd = ref(props.entry.endMinutes)
 
   const top = computed(() => minuteToY(localStart.value))
-  const height = computed(() => Math.max(minuteToY(localEnd.value) - top.value, 4))
+  const height = computed(() => Math.max(minuteToY(localEnd.value) - top.value, 8))
+
+  /**
+   * Shrink the resize handles on short blocks so they keep a clickable body.
+   * A fixed 6px per handle swallowed a 6-minute entry whole at 100% zoom.
+   */
+  const handleHeight = computed(() => Math.max(2, Math.min(6, Math.floor(height.value / 4))))
+
+  /**
+   * Hover tooltip: what this block actually is, then how to change it.
+   *
+   * The block body only shows these lines when it is tall enough, so a short
+   * entry would otherwise be unidentifiable without opening the editor — which
+   * now needs a double-click.
+   */
+  const tooltip = computed(() => {
+    const lines = [
+      project.value?.name ?? '(no project)',
+      `${minutesToTime(localStart.value)} – ${minutesToTime(localEnd.value)} · ${formatDuration(durationMin.value)}`,
+    ]
+    const note = props.entry.note.trim()
+
+    if (note) {
+      lines.push(note)
+    }
+
+    lines.push('Double-click to edit · drag to move · ctrl/shift+click to select')
+
+    return lines.join('\n')
+  })
 
   // Drag state
   type DragEdge = 'top' | 'bottom' | 'move'
@@ -37,6 +69,12 @@
    * resize. Swallow exactly that one click.
    */
   let suppressClick = false
+  /**
+   * Whether the press started on the body rather than on a resize handle.
+   * Only a body press produces a trailing click to swallow — setting the flag
+   * for a handle press would eat the *next* body click instead.
+   */
+  let pressStartedOnBody = false
 
   // Keep the local copy in step with the store. Without this an entry edited
   // through the modal (or replaced by the 30s activity refresh) keeps rendering
@@ -52,6 +90,13 @@
   )
 
   function startDrag(edge: DragEdge, e: MouseEvent) {
+    // Only the primary button drags. Without this a right-click's mousedown
+    // started a "move" drag whose mouseup was treated as a click, so
+    // right-clicking an entry opened the editor — on top of the context menu.
+    if (e.button !== 0) {
+      return
+    }
+
     e.preventDefault()
     e.stopPropagation()
     dragEdge = edge
@@ -60,13 +105,14 @@
     dragOriginEnd = localEnd.value
     didMove = false
     suppressClick = false
+    pressStartedOnBody = edge === 'move'
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
   }
 
   function onMove(e: MouseEvent) {
     const deltaY = e.clientY - dragOriginY
-    const deltaMins = snapMinutes((deltaY / HOUR_HEIGHT) * 60)
+    const deltaMins = snapMinutes((deltaY / hourHeight.value) * 60)
     const duration = dragOriginEnd - dragOriginStart
 
     if (deltaMins !== 0) {
@@ -74,30 +120,47 @@
     }
 
     if (dragEdge === 'bottom') {
-      localEnd.value = Math.max(dragOriginEnd + deltaMins, dragOriginStart + 5)
-      localEnd.value = Math.min(localEnd.value, endMin.value)
+      // `minEnd` is the hard floor: an entry must never end before it starts.
+      // The timeline-end clamp below has to respect it — a block that already
+      // sits at or past `timelineEndHour` (an auto-accepted suggestion after
+      // 22:00, say) otherwise collapses its end down to the timeline end and
+      // writes a negative duration.
+      const minEnd = dragOriginStart + 5
+
+      localEnd.value = Math.min(
+        Math.max(dragOriginEnd + deltaMins, minEnd),
+        Math.max(endMin.value, minEnd),
+      )
     } else if (dragEdge === 'top') {
-      localStart.value = Math.min(dragOriginStart + deltaMins, dragOriginEnd - 5)
-      localStart.value = Math.max(localStart.value, startMin.value)
+      // Same invariant as the bottom edge: never let the start overtake the end.
+      // A block that already sits above `timelineStartHour` would otherwise be
+      // pushed down to the timeline start and end up inverted.
+      const maxStart = dragOriginEnd - 5
+
+      localStart.value = Math.max(
+        Math.min(dragOriginStart + deltaMins, maxStart),
+        Math.min(startMin.value, maxStart),
+      )
     } else {
+      // Moving keeps the duration intact, so this cannot invert — but it must
+      // not be able to leave the block somewhere unreachable either.
       let ns = dragOriginStart + deltaMins
       ns = Math.max(ns, startMin.value)
-      ns = Math.min(ns, endMin.value - duration)
+      ns = Math.min(ns, Math.max(endMin.value - duration, startMin.value))
       localStart.value = ns
       localEnd.value = ns + duration
     }
   }
 
-  async function onUp() {
+  async function onUp(e: MouseEvent) {
     document.removeEventListener('mousemove', onMove)
     document.removeEventListener('mouseup', onUp)
-    const edge = dragEdge
     dragEdge = null
 
     if (didMove) {
       // Any real drag consumes the trailing click, even when it lands back on
       // the original time range.
-      suppressClick = true
+      suppressClick = pressStartedOnBody
 
       if (
         localStart.value !== props.entry.startMinutes ||
@@ -115,23 +178,42 @@
       return
     }
 
-    if (edge === 'move') {
-      // No movement at all — treat it as a click and open the editor.
-      suppressClick = true
-      emit('edit', props.entry)
-    }
-
-    localStart.value = props.entry.startMinutes
-    localEnd.value = props.entry.endMinutes
+    // A press with no movement is a click, whichever part of the block it landed
+    // on. Routing the handles through the same path is what makes a 2-minute
+    // entry — all handle, no body — usable with ctrl/shift.
+    suppressClick = pressStartedOnBody
+    emit('select', props.entry, e)
   }
 
-  function onClick() {
+  function onClick(e: MouseEvent) {
     if (suppressClick) {
       suppressClick = false
       return
     }
 
+    // Whether this adds to the selection or replaces it depends on the
+    // modifiers and on what is already selected, which only the parent knows.
+    emit('select', props.entry, e)
+  }
+
+  /**
+   * A double-click is the only way to open the editor with the mouse, so it is
+   * handled on the whole block — a 2-minute entry is all resize handle, and its
+   * body is too small to be a reliable double-click target.
+   */
+  function onDblClick(e: MouseEvent) {
+    e.stopPropagation()
     emit('edit', props.entry)
+  }
+
+  /**
+   * The menu *items* live in the parent: whether "merge with previous" applies
+   * depends on the neighbouring entries, which this component never sees.
+   */
+  function onContextMenu(e: MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('context-menu', props.entry, e)
   }
 
   onUnmounted(() => {
@@ -143,10 +225,18 @@
 <template>
   <div
     class="time-block"
+    :class="{ selected }"
     :style="{ top: top + 'px', height: height + 'px', '--color': color }"
-    data-tooltip="Click to edit · drag to move · drag an edge to resize"
+    :data-tooltip="tooltip"
+    :data-tooltip-color="color"
+    @contextmenu="onContextMenu"
+    @dblclick="onDblClick"
   >
-    <div class="handle handle-top" @mousedown.stop="startDrag('top', $event)" />
+    <div
+      class="handle handle-top"
+      :style="{ height: handleHeight + 'px' }"
+      @mousedown.stop="startDrag('top', $event)"
+    />
     <div class="block-body" @mousedown.stop="startDrag('move', $event)" @click.stop="onClick">
       <span v-if="height > 22" class="project-name">{{ project?.name ?? '(no project)' }}</span>
       <span v-if="height > 38" class="duration">
@@ -155,7 +245,11 @@
       </span>
       <span v-if="height > 54 && entry.note" class="note">{{ entry.note }}</span>
     </div>
-    <div class="handle handle-bottom" @mousedown.stop="startDrag('bottom', $event)" />
+    <div
+      class="handle handle-bottom"
+      :style="{ height: handleHeight + 'px' }"
+      @mousedown.stop="startDrag('bottom', $event)"
+    />
   </div>
 </template>
 
@@ -177,6 +271,13 @@
 
   .time-block:hover {
     box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+  }
+
+  .time-block.selected {
+    z-index: 12;
+    box-shadow:
+      0 0 0 2px var(--surface),
+      0 0 0 4px var(--primary);
   }
 
   .handle {

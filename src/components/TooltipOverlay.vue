@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref, onMounted, onUnmounted } from 'vue'
+  import { ref, onMounted, onUnmounted, watch } from 'vue'
   import { useContextMenu } from '../composables/useContextMenu'
 
   const { visible: menuVisible } = useContextMenu()
@@ -60,8 +60,37 @@
   }
 
   function onContextMenu() {
+    hide()
+  }
+
+  function hide() {
+    if (hideTimer) {
+      clearTimeout(hideTimer)
+      hideTimer = null
+    }
+
     visible.value = false
   }
+
+  /**
+   * Hide whenever the context menu opens.
+   *
+   * The `contextmenu` listener below is not enough on its own: the timeline's
+   * entry blocks call `stopPropagation()`, so the event never reaches this
+   * document-level handler and the tooltip stayed up underneath the menu.
+   * Watching the menu's own state is immune to that.
+   *
+   * `flush: 'sync'` so the tooltip is gone before the menu paints.
+   */
+  watch(
+    menuVisible,
+    (open) => {
+      if (open) {
+        hide()
+      }
+    },
+    { flush: 'sync' },
+  )
 
   onMounted(() => {
     document.addEventListener('mouseover', onOver)

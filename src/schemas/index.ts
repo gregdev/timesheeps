@@ -112,6 +112,12 @@ export type SuggestedEntry = z.infer<typeof SuggestedEntrySchema>
 export const SettingsSchema = z.object({
   minDurationSecs: z.number(),
   mergeGapSecs: z.number(),
+  /**
+   * Largest gap between two matched blocks that still becomes one suggested
+   * entry. Kept well above `mergeGapSecs` because every window switch leaves a
+   * poll interval of dead air. `0` restores merge-on-contact only.
+   */
+  suggestionGapSecs: z.number(),
   idleTimeoutSecs: z.number(),
   timelineStartHour: z.number(),
   timelineEndHour: z.number(),

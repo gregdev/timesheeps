@@ -27,6 +27,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({
     minDurationSecs: 300,
     mergeGapSecs: 120,
+    suggestionGapSecs: 300,
     idleTimeoutSecs: 300,
     timelineStartHour: 7,
     timelineEndHour: 22,

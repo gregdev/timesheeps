@@ -233,6 +233,137 @@ export const useDayStore = defineStore('day', () => {
     timeEntries.value = timeEntries.value.filter((e) => e.id !== id)
   }
 
+  /**
+   * Delete several entries at once. Confirmation belongs to the caller — this
+   * is the same irreversible operation as `deleteEntry`, just repeated.
+   */
+  async function deleteEntries(ids: number[]) {
+    if (ids.length === 0) {
+      return
+    }
+
+    await Promise.all(ids.map((id) => api.deleteTimeEntry(id)))
+    timeEntries.value = timeEntries.value.filter((e) => !ids.includes(e.id))
+  }
+
+  /**
+   * Fold entry `id` into the entry immediately before it, keeping the earlier
+   * entry's identity and extending its end.
+   *
+   * Deliberately strict: the two must be *adjacent* in time (no third entry
+   * between them) and belong to the same project. Merging across a different
+   * project's entry would create an overlap and bill that work here; merging
+   * across a long gap would count untracked time as work.
+   *
+   * Returns false when the pair does not qualify, so a caller that judged the
+   * menu item visible on stale data does not silently change anything.
+   */
+  async function mergeWithPrevious(id: number): Promise<boolean> {
+    const sorted = [...timeEntries.value].sort((a, b) => a.startMinutes - b.startMinutes)
+    const idx = sorted.findIndex((e) => e.id === id)
+
+    if (idx <= 0) {
+      return false
+    }
+
+    const target = sorted[idx]
+    const previous = sorted[idx - 1]
+
+    if (previous.projectId !== target.projectId || previous.endMinutes > target.startMinutes) {
+      return false
+    }
+
+    // Update before deleting: if the update is rejected (the backend refuses an
+    // inverted range) the later entry is still there to try again with.
+    await updateEntry(
+      previous.id,
+      previous.projectId,
+      previous.startMinutes,
+      Math.max(previous.endMinutes, target.endMinutes),
+      previous.note || target.note,
+    )
+    await deleteEntry(target.id)
+
+    return true
+  }
+
+  /**
+   * Why merging `ids` would be wrong, or null when it is safe.
+   *
+   * Shared with the header bar so the Merge button is disabled with a reason
+   * instead of failing after the click.
+   */
+  function mergeBlocker(ids: number[]): string | null {
+    const selected = timeEntries.value.filter((e) => ids.includes(e.id))
+
+    if (selected.length < 2) {
+      return 'Select at least two entries to merge them.'
+    }
+
+    if (new Set(selected.map((e) => e.projectId)).size > 1) {
+      return 'The selected entries belong to more than one project.'
+    }
+
+    const start = Math.min(...selected.map((e) => e.startMinutes))
+    const end = Math.max(...selected.map((e) => e.endMinutes))
+
+    if (end <= start) {
+      return 'The selection has no duration — edit the entry first.'
+    }
+
+    // A span is fine across *gaps*, but crossing an entry that stays out of the
+    // selection would leave the survivor overlapping it.
+    const blocker = timeEntries.value.find(
+      (e) => !ids.includes(e.id) && e.startMinutes < end && e.endMinutes > start,
+    )
+
+    return blocker
+      ? `The merged span would cover another entry (${formatEntryRange(blocker)}).`
+      : null
+  }
+
+  function formatEntryRange(entry: TimeEntry): string {
+    const clock = (m: number) =>
+      `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+
+    return `${clock(entry.startMinutes)}–${clock(entry.endMinutes)}`
+  }
+
+  /**
+   * Fold several entries into one, spanning the earliest start to the latest
+   * end and keeping the earliest entry's id.
+   *
+   * The gaps inside the span become counted time, which is the point of the
+   * action — the user is asserting they were working throughout. Anything that
+   * makes that assertion unsafe is refused by `mergeBlocker` instead of being
+   * silently trimmed.
+   */
+  async function mergeEntries(ids: number[]): Promise<{ ok: boolean; reason?: string }> {
+    const blocker = mergeBlocker(ids)
+
+    if (blocker) {
+      return { ok: false, reason: blocker }
+    }
+
+    const selected = timeEntries.value
+      .filter((e) => ids.includes(e.id))
+      .sort((a, b) => a.startMinutes - b.startMinutes)
+
+    const survivor = selected[0]
+    const start = survivor.startMinutes
+    const end = Math.max(...selected.map((e) => e.endMinutes))
+    // Keep the first non-blank note; the survivor's own note wins when set.
+    const note = selected.find((e) => e.note.trim())?.note ?? ''
+
+    await updateEntry(survivor.id, survivor.projectId, start, end, note)
+
+    for (const entry of selected.slice(1)) {
+      await deleteEntry(entry.id)
+    }
+
+    return { ok: true }
+  }
+
   const summary = computed(() => {
     const map = new Map<number, number>()
 
@@ -281,6 +412,10 @@ export const useDayStore = defineStore('day', () => {
     createEntries,
     updateEntry,
     deleteEntry,
+    deleteEntries,
+    mergeWithPrevious,
+    mergeBlocker,
+    mergeEntries,
     summary,
   }
 })

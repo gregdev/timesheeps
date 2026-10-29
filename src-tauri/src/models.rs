@@ -170,11 +170,25 @@ pub struct CreateFilterRule {
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
+/// Serde fallback so an older frontend payload (one that predates the field)
+/// cannot fail `save_settings` — and, just as importantly, cannot silently map
+/// to `0`, which would disable gap-bridging for good.
+fn default_suggestion_gap_secs() -> i64 {
+    300
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub min_duration_secs: i64,
     pub merge_gap_secs: i64,
+    /// How large a gap between two matched blocks may be and still become one
+    /// suggested entry. Deliberately much larger than `merge_gap_secs`: the
+    /// poller leaves one interval (~20s) between rows on every window switch,
+    /// so without a tolerance every editor ↔ browser switch ends a suggestion
+    /// and auto-accept turns one work stretch into a dozen entries.
+    #[serde(default = "default_suggestion_gap_secs")]
+    pub suggestion_gap_secs: i64,
     pub idle_timeout_secs: i64,
     pub timeline_start_hour: i64,
     pub timeline_end_hour: i64,
@@ -223,6 +237,7 @@ impl Default for Settings {
         Settings {
             min_duration_secs: 300,
             merge_gap_secs: 120,
+            suggestion_gap_secs: default_suggestion_gap_secs(),
             idle_timeout_secs: 300,
             timeline_start_hour: 7,
             timeline_end_hour: 22,

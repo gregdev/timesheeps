@@ -169,19 +169,33 @@ pub fn compute_matches(
 }
 
 /// Suggestions for the timeline: consecutive matches for the same project are
-/// merged into a single span.
+/// merged into a single span when the gap between them is no larger than
+/// `settings.suggestion_gap_secs`.
+///
+/// The tolerance is the whole point. The poller leaves one poll interval
+/// (~20s) between rows on every window switch, so an alternating editor ↔
+/// browser session never produces *touching* blocks. Merging only on contact
+/// therefore turned one stretch of work into one suggestion — and, with
+/// auto-accept on, one time entry — per app switch, even when every block
+/// resolved to the same project.
+///
+/// A block claimed by a **different** project still breaks the run: bridging
+/// it would bill that project's work to this one's span.
 pub fn compute_suggestions(
     blocks: &[ActivityBlock],
     rules: &[CompiledRule],
     settings: &Settings,
 ) -> Vec<SuggestedEntry> {
     let matches = compute_matches(blocks, rules, settings);
+    let bridge = chrono::Duration::seconds(settings.suggestion_gap_secs.max(0));
     let mut merged: Vec<SuggestedEntry> = Vec::new();
 
     for m in matches {
         let last = merged.last_mut();
         match last {
-            Some(last) if last.project_id == m.project_id && m.started_at <= last.ended_at => {
+            Some(last)
+                if last.project_id == m.project_id && m.started_at <= last.ended_at + bridge =>
+            {
                 if m.ended_at > last.ended_at {
                     last.ended_at = m.ended_at;
                 }
@@ -595,6 +609,93 @@ mod tests {
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].rule_id, 1);
         assert_eq!(suggestions[0].ended_at, Utc.with_ymd_and_hms(2026, 9, 23, 11, 0, 0).unwrap());
+    }
+
+    /// A block from `start_sec` to `end_sec` measured from 09:00 on 2026-09-23.
+    fn window(app: &str, title: &str, start_sec: i64, end_sec: i64) -> ActivityBlock {
+        let at = |s: i64| Utc.with_ymd_and_hms(2026, 9, 23, 9, 0, 0).unwrap() + chrono::Duration::seconds(s);
+        ActivityBlock {
+            app_name: app.to_string(),
+            window_title: title.to_string(),
+            window_titles: vec![title.to_string()],
+            started_at: at(start_sec),
+            ended_at: at(end_sec),
+            duration_secs: end_sec - start_sec,
+            window_id: start_sec as u64,
+        }
+    }
+
+    #[test]
+    fn a_small_gap_between_same_project_windows_is_bridged() {
+        // Editor and browser both resolve to the same project, but the poller
+        // leaves 20s of dead air on the switch. That must not split the
+        // suggestion, or auto-accept writes one entry per app switch.
+        let rules = compile(&[rule(
+            1,
+            7,
+            0,
+            vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "buyflow", false)],
+        )]);
+        let blocks = [
+            window("Code", "a.cls - soa-buyflow", 0, 300),
+            window("brave", "Buyflow - Brave", 320, 540),
+            window("Code", "b.cls - soa-buyflow", 560, 720),
+        ];
+        let suggestions = compute_suggestions(&blocks, &rules, &settings());
+        assert_eq!(suggestions.len(), 1, "{suggestions:?}");
+        assert_eq!(
+            suggestions[0].ended_at,
+            Utc.with_ymd_and_hms(2026, 9, 23, 9, 12, 0).unwrap()
+        );
+        assert_eq!(suggestions[0].project_id, 7);
+    }
+
+    #[test]
+    fn a_gap_wider_than_the_tolerance_still_splits() {
+        let mut s = settings();
+        s.suggestion_gap_secs = 300;
+        let rules = compile(&[rule(
+            1,
+            7,
+            0,
+            vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "buyflow", false)],
+        )]);
+        // 10 minutes of nothing between two 5-minute blocks.
+        let apart = [
+            window("Code", "a.cls - soa-buyflow", 0, 300),
+            window("Code", "b.cls - soa-buyflow", 900, 1200),
+        ];
+        assert_eq!(compute_suggestions(&apart, &rules, &s).len(), 2);
+
+        let touching = [
+            window("Code", "a.cls - soa-buyflow", 0, 300),
+            window("Code", "b.cls - soa-buyflow", 300, 600),
+        ];
+        s.suggestion_gap_secs = 0;
+        assert_eq!(
+            compute_suggestions(&touching, &rules, &s).len(),
+            1,
+            "touching blocks merge even with zero tolerance"
+        );
+    }
+
+    #[test]
+    fn another_project_between_two_blocks_still_splits_them() {
+        // Bridging across the 3D Printing block would bill its minutes to the
+        // Buyflow span, so the tolerance must not apply across a different
+        // project's match.
+        let rules = compile(&[
+            rule(1, 7, 0, vec![cond(MatchField::WindowTitle, MatchOperator::Contains, "buyflow", false)]),
+            rule(2, 8, 1, vec![cond(MatchField::AppName, MatchOperator::Equals, "orca-slicer", false)]),
+        ]);
+        let blocks = [
+            window("Code", "a.cls - soa-buyflow", 0, 300),
+            window("orca-slicer", "*Untitled", 320, 400),
+            window("Code", "b.cls - soa-buyflow", 420, 600),
+        ];
+        let suggestions = compute_suggestions(&blocks, &rules, &settings());
+        assert_eq!(suggestions.len(), 3, "{suggestions:?}");
+        assert_eq!(suggestions[1].project_id, 8);
     }
 
     #[test]

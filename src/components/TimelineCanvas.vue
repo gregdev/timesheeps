@@ -1,25 +1,209 @@
 <script setup lang="ts">
-  import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+  import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
   import type { TimeEntry } from '../schemas'
   import { useDayStore } from '../stores/day'
   import { useSettingsStore } from '../stores/settings'
   import { useTimeline } from '../composables/useTimeline'
   import { useEntryModal, type EntryRange } from '../composables/useEntryModal'
   import { useContextMenu } from '../composables/useContextMenu'
+  import { useEntrySelection } from '../composables/useEntrySelection'
+  import { useProjectsStore } from '../stores/projects'
   import TimeRuler from './TimeRuler.vue'
   import ActivityBlockItem from './ActivityBlockItem.vue'
   import EntryTrack from './EntryTrack.vue'
   import ProjectPickerModal from './ProjectPickerModal.vue'
+  import ConfirmDialog from './ConfirmDialog.vue'
 
   defineOptions({ inheritAttrs: false })
 
   const dayStore = useDayStore()
   const settingsStore = useSettingsStore()
-  const { totalHeight, hours, minuteToY, isoToMinutes } = useTimeline()
+  const projectsStore = useProjectsStore()
+  const {
+    totalHeight,
+    hours,
+    minuteToY,
+    yToMinute,
+    zoomBy,
+    isoToMinutes,
+    minutesToTime,
+    formatDuration,
+  } = useTimeline()
   const { pendingCreate, editingEntry } = useEntryModal()
   const { open: openMenu } = useContextMenu()
+  const { selectedIds, selectionCount, clear: clearSelection } = useEntrySelection()
 
   const scrollRef = ref<HTMLElement>()
+
+  // ---- selection ----
+  /**
+   * Why the current selection cannot be merged, or null.
+   *
+   * Computed here rather than tracked as an error: the header disables the
+   * button and shows the reason on hover, so nothing is attempted and rejected.
+   */
+  const mergeIssue = computed(() => dayStore.mergeBlocker(selectedIds.value))
+  const mergeError = ref<string | null>(null)
+  let mergeErrorTimer: ReturnType<typeof setTimeout> | null = null
+
+  async function onMergeSelected() {
+    const ids = [...selectedIds.value]
+    const result = await dayStore.mergeEntries(ids)
+
+    if (result.ok) {
+      clearSelection()
+      return
+    }
+
+    mergeError.value = result.reason ?? 'Could not merge the selected entries.'
+
+    if (mergeErrorTimer) {
+      clearTimeout(mergeErrorTimer)
+    }
+
+    mergeErrorTimer = setTimeout(() => {
+      mergeError.value = null
+    }, 4000)
+  }
+
+  function onSelectionKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && selectionCount.value > 0) {
+      clearSelection()
+      return
+    }
+
+    if (e.key !== 'Delete') {
+      return
+    }
+
+    // Never steal Delete from a text field (the timer note, the picker's
+    // project search) and never stack a prompt on top of an open modal.
+    const target = e.target as HTMLElement | null
+    const typing =
+      target !== null &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+
+    if (typing || deletePrompt.value || editingEntry.value || pendingCreate.value) {
+      return
+    }
+
+    if (selectionCount.value === 0) {
+      return
+    }
+
+    e.preventDefault()
+    promptDeleteEntries([...selectedIds.value])
+  }
+
+  // ---- deletion ----
+  interface DeletePrompt {
+    ids: number[]
+    title: string
+    message: string
+    chips: string[]
+  }
+
+  const deletePrompt = ref<DeletePrompt | null>(null)
+
+  function chipsFor(entries: TimeEntry[]): string[] {
+    const shown = entries.slice(0, 6).map((e) => {
+      const project = projectsStore.byId(e.projectId)?.name ?? 'No project'
+
+      return `${project} ${minutesToTime(e.startMinutes)}–${minutesToTime(e.endMinutes)}`
+    })
+
+    if (entries.length > shown.length) {
+      shown.push(`+${entries.length - shown.length} more`)
+    }
+
+    return shown
+  }
+
+  /** Open the confirmation for an explicit set of ids. */
+  function promptDeleteEntries(ids: number[]) {
+    const entries = dayStore.timeEntries
+      .filter((e) => ids.includes(e.id))
+      .sort((a, b) => a.startMinutes - b.startMinutes)
+
+    if (entries.length === 0) {
+      return
+    }
+
+    const totalMin = entries.reduce((sum, e) => sum + (e.endMinutes - e.startMinutes), 0)
+    const what = entries.length === 1 ? '1 time entry' : `${entries.length} time entries`
+
+    deletePrompt.value = {
+      ids: entries.map((e) => e.id),
+      title: entries.length === 1 ? 'Delete time entry?' : `Delete ${entries.length} entries?`,
+      message: `${what} · ${formatDuration(totalMin)} will be removed from this day.`,
+      chips: chipsFor(entries),
+    }
+  }
+
+  /** Open the confirmation for the current selection. */
+  function onDeleteSelected() {
+    promptDeleteEntries([...selectedIds.value])
+  }
+
+  /**
+   * Close without deleting.
+   *
+   * Escape/✕/backdrop (`dismiss`) and the Cancel button (`cancel`) are the same
+   * outcome here — but they are kept as separate events so a prompt where the
+   * secondary button *does* something cannot be dismissed into that action.
+   */
+  function closeDeletePrompt() {
+    deletePrompt.value = null
+  }
+
+  function onDeleteEntry(entry: TimeEntry) {
+    promptDeleteEntries([entry.id])
+  }
+
+  async function confirmDelete() {
+    const ids = deletePrompt.value?.ids ?? []
+    deletePrompt.value = null
+
+    if (ids.length === 0) {
+      return
+    }
+
+    await dayStore.deleteEntries(ids)
+    clearSelection()
+  }
+
+  // ---- zoom ----
+  /**
+   * Ctrl+wheel zooms around the pointer.
+   *
+   * `preventDefault` is essential: WebView2 otherwise treats ctrl+wheel as a
+   * page zoom and scales the whole UI out from under the timeline. The minute
+   * under the cursor is captured before the change and scrolled back to
+   * afterwards, so the view does not jump.
+   */
+  async function onWheel(e: WheelEvent) {
+    if (!e.ctrlKey && !e.metaKey) {
+      return
+    }
+
+    const scroller = scrollRef.value
+
+    if (!scroller) {
+      return
+    }
+
+    e.preventDefault()
+
+    const pointerOffset = e.clientY - scroller.getBoundingClientRect().top
+    const minute = yToMinute(scroller.scrollTop + pointerOffset)
+
+    zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15)
+
+    // The content is taller than the viewport, so the new scrollTop must be
+    // applied after the height has been laid out or it clamps to the old one.
+    await nextTick()
+    scroller.scrollTop = minuteToY(minute) - pointerOffset
+  }
 
   // ---- column resize ----
   const splitRatio = ref(settingsStore.settings.timelineColSplitPct / 100)
@@ -142,14 +326,19 @@
       )
       editingEntry.value = null
     } else if (pendingCreate.value) {
+      const autoTrackAppName = pendingCreate.value.autoTrackAppName
+
+      // Close the picker *before* any follow-up prompt. The auto-track conflict
+      // dialog is a sibling modal, and leaving `pendingCreate` set would render
+      // both at once with independent Escape/focus handling.
+      pendingCreate.value = null
+
       await dayStore.createEntries(projectId, ranges, note)
 
       // Create auto-track rule if toggle was enabled
-      if (autoTrack && pendingCreate.value.autoTrackAppName) {
-        await createAutoTrackRule(projectId, pendingCreate.value.autoTrackAppName)
+      if (autoTrack && autoTrackAppName) {
+        await createAutoTrackRule(projectId, autoTrackAppName)
       }
-
-      pendingCreate.value = null
     }
   }
 
@@ -166,13 +355,21 @@
       return
     }
 
-    const choice = window.confirm(
-      `"${appName}" is already matched to a different project by the rule "${conflict.name}".\n\n` +
-        `OK — reassign that rule to this project instead.\n` +
-        `Cancel — keep it and add this project's rule below it in priority order.`,
-    )
+    const choice = await askAppConflict({
+      appName,
+      conflictId: conflict.id,
+      conflictName: conflict.name,
+      conflictProjectName: projectsStore.byId(conflict.projectId)?.name ?? 'another project',
+      projectName: projectsStore.byId(projectId)?.name ?? 'this project',
+    })
 
-    if (choice) {
+    // Dismissed (✕ / Escape / backdrop) or dismissed via the secondary button:
+    // check which, because the secondary button DOES create a rule.
+    if (choice === null) {
+      return
+    }
+
+    if (choice === 'reassign') {
       await settingsStore.updateMatchRule(
         conflict.id,
         conflict.name,
@@ -189,6 +386,44 @@
     }
 
     await settingsStore.refreshRuleStats()
+  }
+
+  // ---- auto-track rule conflict ----
+  type AppConflictChoice = 'reassign' | 'add-below'
+
+  interface AppConflictPrompt {
+    appName: string
+    conflictId: number
+    conflictName: string
+    conflictProjectName: string
+    projectName: string
+  }
+
+  const appConflict = ref<AppConflictPrompt | null>(null)
+  /** Resolver for the in-flight `askAppConflict`, if any. */
+  let settleAppConflict: ((choice: AppConflictChoice | null) => void) | null = null
+
+  /**
+   * Ask which way to resolve a duplicate app rule, as a promise.
+   *
+   * The dialog is rendered declaratively like every other modal; the promise is
+   * what lets `createAutoTrackRule` stay a straight-line async function instead
+   * of a state machine.
+   *
+   * Resolves `null` when the user dismissed the prompt without choosing.
+   */
+  function askAppConflict(prompt: AppConflictPrompt): Promise<AppConflictChoice | null> {
+    return new Promise((resolve) => {
+      settleAppConflict = resolve
+      appConflict.value = prompt
+    })
+  }
+
+  function resolveAppConflict(choice: AppConflictChoice | null) {
+    appConflict.value = null
+    const settle = settleAppConflict
+    settleAppConflict = null
+    settle?.(choice)
   }
 
   function buildAppNameConditions(appName: string) {
@@ -242,12 +477,29 @@
     if (scrollRef.value) {
       scrollRef.value.scrollTop = minuteToY(8 * 60) - 40
     }
+
+    // Registered by hand so it is non-passive: `preventDefault` on a passive
+    // wheel listener is ignored, and without it the webview page-zooms.
+    scrollRef.value?.addEventListener('wheel', onWheel, { passive: false })
+    document.addEventListener('keydown', onSelectionKeydown)
   })
 
-  // Reset scroll to 8am when navigating to a different day
+  onUnmounted(() => {
+    scrollRef.value?.removeEventListener('wheel', onWheel)
+    document.removeEventListener('keydown', onSelectionKeydown)
+
+    if (mergeErrorTimer) {
+      clearTimeout(mergeErrorTimer)
+    }
+  })
+
+  // A different day has entirely different entries, so a selection cannot carry
+  // over — the ids would either vanish or point at unrelated rows.
   watch(
     () => dayStore.selectedDate,
     () => {
+      clearSelection()
+
       if (scrollRef.value) {
         scrollRef.value.scrollTop = minuteToY(8 * 60) - 40
       }
@@ -262,7 +514,22 @@
       <div class="ruler-spacer" />
       <div class="col-header" :style="{ flex: `0 0 ${activityPct}%` }">Activity</div>
       <div class="resize-spacer" />
-      <div class="col-header entry-header" style="flex: 1 1 0%">My Time</div>
+      <div class="col-header entry-header" style="flex: 1 1 0%">
+        <template v-if="selectionCount > 0">
+          <span class="selection-label">{{ selectionCount }} selected</span>
+          <button
+            class="selection-btn"
+            :disabled="mergeIssue !== null"
+            :title="mergeIssue ?? 'Merge the selected entries into one block'"
+            @click="onMergeSelected"
+          >
+            Merge
+          </button>
+          <button class="selection-btn" @click="clearSelection">Clear</button>
+          <span v-if="mergeError" class="selection-error">{{ mergeError }}</span>
+        </template>
+        <template v-else>My Time</template>
+      </div>
     </div>
 
     <!-- Scrollable timeline body -->
@@ -333,6 +600,9 @@
           @request-create="onRequestCreate"
           @edit="onEditEntry"
           @accept-suggestion="onAcceptSuggestion"
+          @merge-selection="onMergeSelected"
+          @delete-selection="onDeleteSelected"
+          @delete-entry="onDeleteEntry"
         />
       </div>
     </div>
@@ -350,6 +620,35 @@
     @delete="onModalDelete"
     @cancel="onModalCancel"
   />
+
+  <ConfirmDialog
+    v-if="deletePrompt"
+    :title="deletePrompt.title"
+    :message="deletePrompt.message"
+    :chips="deletePrompt.chips"
+    confirm-label="Delete"
+    @confirm="confirmDelete"
+    @cancel="closeDeletePrompt"
+    @dismiss="closeDeletePrompt"
+  />
+
+  <ConfirmDialog
+    v-if="appConflict"
+    title="App is already tracked"
+    :message="
+      `“${appConflict.appName}” is already matched to ${appConflict.conflictProjectName} by the rule ` +
+      `“${appConflict.conflictName}”. Reassign that rule to ${appConflict.projectName}, or keep it and ` +
+      `add ${appConflict.projectName}'s rule below it in priority order?`
+    "
+    confirm-label="Reassign rule"
+    cancel-label="Add below it"
+    link-label="Cancel"
+    :danger="false"
+    hint="Closing this creates no rule."
+    @confirm="resolveAppConflict('reassign')"
+    @cancel="resolveAppConflict('add-below')"
+    @dismiss="resolveAppConflict(null)"
+  />
 </template>
 
 <style scoped>
@@ -363,6 +662,14 @@
   .col-headers {
     display: flex;
     flex-shrink: 0;
+
+    /*
+     * Fixed, not content-driven. The selection toolbar (11px buttons at 19.4px
+     * tall) is taller than the bare "My Time" label, so a content-sized row grew
+     * by ~4px the moment anything was selected — which shifted the whole
+     * timeline body under the cursor. Sized for the taller of the two states.
+     */
+    height: 32px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
   }
@@ -374,7 +681,12 @@
 
   .col-header {
     flex: 1;
-    padding: 6px 8px;
+
+    /* Vertical centring replaces the old 6px padding, so the fixed height and
+       the border-left both apply to the full row. */
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -385,6 +697,35 @@
 
   .entry-header {
     border-right: none;
+    gap: 8px;
+    text-transform: none;
+  }
+
+  .selection-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .selection-btn {
+    font-size: 11px;
+    padding: 2px 8px;
+    min-height: 0;
+    line-height: 1.4;
+  }
+
+  .selection-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .selection-error {
+    font-size: 11px;
+    color: var(--danger, #dc2626);
+    text-transform: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .resize-spacer {

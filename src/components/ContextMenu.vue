@@ -24,8 +24,13 @@
     }
   })
 
-  function onItemClick(action: () => void) {
-    action()
+  function onItemClick(item: { action: () => void; disabled?: boolean }) {
+    if (item.disabled) {
+      // Keep the menu open: a disabled row is information, not a choice.
+      return
+    }
+
+    item.action()
     close()
   }
 
@@ -70,9 +75,10 @@
         v-for="item in items"
         :key="item.label"
         class="context-menu-item"
-        :class="{ danger: item.danger }"
+        :class="{ danger: item.danger, disabled: item.disabled }"
         role="menuitem"
-        @mousedown.prevent="onItemClick(item.action)"
+        :aria-disabled="item.disabled ? 'true' : undefined"
+        @mousedown.prevent="onItemClick(item)"
       >
         {{ item.label }}
       </li>
@@ -133,5 +139,15 @@
   .context-menu-item.danger:hover {
     background: color-mix(in srgb, #ef4444 12%, transparent);
     color: #ef4444;
+  }
+
+  .context-menu-item.disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .context-menu-item.disabled:hover {
+    background: transparent;
+    color: inherit;
   }
 </style>

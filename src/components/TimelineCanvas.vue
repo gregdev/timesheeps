@@ -67,23 +67,51 @@
   }
 
   function onSelectionKeydown(e: KeyboardEvent) {
+    // Never steal keystrokes from a text field (the timer note, the picker's
+    // project search) and never act on top of an open modal.
+    const target = e.target as HTMLElement | null
+    const typing =
+      target !== null &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+    const modalOpen =
+      deletePrompt.value !== null || editingEntry.value !== null || pendingCreate.value !== null
+
     if (e.key === 'Escape' && selectionCount.value > 0) {
       clearSelection()
       return
+    }
+
+    // Undo / redo. Ctrl+Y is included because it is the Windows habit, alongside
+    // Ctrl+Shift+Z which is the other one people reach for. `preventDefault` is
+    // only called when there is actually something to undo, so the keystroke is
+    // left alone otherwise.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !typing && !modalOpen) {
+      const key = e.key.toLowerCase()
+
+      if (key === 'z' && !e.shiftKey) {
+        if (dayStore.canUndo) {
+          e.preventDefault()
+          void dayStore.undo()
+        }
+
+        return
+      }
+
+      if ((key === 'z' && e.shiftKey) || key === 'y') {
+        if (dayStore.canRedo) {
+          e.preventDefault()
+          void dayStore.redo()
+        }
+
+        return
+      }
     }
 
     if (e.key !== 'Delete') {
       return
     }
 
-    // Never steal Delete from a text field (the timer note, the picker's
-    // project search) and never stack a prompt on top of an open modal.
-    const target = e.target as HTMLElement | null
-    const typing =
-      target !== null &&
-      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-
-    if (typing || deletePrompt.value || editingEntry.value || pendingCreate.value) {
+    if (typing || modalOpen) {
       return
     }
 

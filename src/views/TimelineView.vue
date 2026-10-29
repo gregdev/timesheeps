@@ -181,6 +181,26 @@
     <div class="day-nav-area">
       <DayNav />
       <div class="day-actions">
+        <div class="history-actions">
+          <button
+            class="btn-ghost icon-btn"
+            :disabled="!dayStore.canUndo"
+            data-tooltip="Undo (Ctrl+Z)"
+            aria-label="Undo"
+            @click="dayStore.undo()"
+          >
+            ↶
+          </button>
+          <button
+            class="btn-ghost icon-btn"
+            :disabled="!dayStore.canRedo"
+            data-tooltip="Redo (Ctrl+Shift+Z)"
+            aria-label="Redo"
+            @click="dayStore.redo()"
+          >
+            ↷
+          </button>
+        </div>
         <TimelineZoomControl />
         <button
           class="btn-ghost copy-btn"
@@ -242,6 +262,29 @@
     font-size: var(--text-xs);
     padding: var(--space-1) var(--space-2);
     white-space: nowrap;
+  }
+
+  .history-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: var(--space-1);
+  }
+
+  .icon-btn {
+    font-size: var(--text-sm);
+    line-height: 1;
+    width: var(--space-6);
+    height: var(--space-6);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .icon-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
 
   .main-area {

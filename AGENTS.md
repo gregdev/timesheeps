@@ -180,6 +180,16 @@ src/
   tooltip. Gaps inside the span become counted time — that is the point of the action, not a bug
 - `Merge with previous entry` (right-click) is the single-pair version and is stricter: adjacent
   entries only, same project, non-overlapping
+- **Undo/redo** (`dayStore.undo` / `redo`, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, plus toolbar buttons) is
+  snapshot-based, not command-based: a day holds a few dozen entries, and a composite like Merge
+  (one update plus N deletes) then undoes as a single step with no per-operation inverse to write.
+  `withHistory()` records the pre-state only _after_ a successful mutation that actually changed the
+  list, so a refused merge or an unchanged update leaves no step. `restore()` matches entries by id
+  first and falls back to a content key, because undoing a delete re-creates the row with a **new
+  backend id**; it then re-reads the day so ids stay authoritative. Stacks are per-day and cleared
+  whenever `selectedDate` changes — restoring a snapshot captured on another date would write rows
+  onto a day they never belonged to. Note that auto-accepted suggestions are not recorded, so undo
+  can remove one; the suggestion then reappears, because suggestions are recomputed from activity
 - Right-clicking an entry that is part of a multi-selection opens the **bulk** menu instead
   (Merge N / Delete N / Clear selection). Merge is rendered disabled when `mergeBlocker` refuses,
   rather than being offered and rejected. Bulk actions are _emitted_ to `TimelineCanvas`, which owns

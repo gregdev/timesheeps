@@ -46,9 +46,227 @@ export const useDayStore = defineStore('day', () => {
 
   const isViewingToday = computed(() => selectedDate.value === currentDate.value)
 
+  // ── Undo / redo ─────────────────────────────────────────────────────────────
+  //
+  // Snapshot-based rather than command-based. A day holds a few dozen entries,
+  // so copying the list is cheap, and composites like Merge (one update plus N
+  // deletes) then undo as a single step for free — no per-operation inverse to
+  // write or keep correct.
+  //
+  // The subtlety is identity: undoing a delete has to *re-create* the row, and
+  // the backend issues a new id. Restore therefore matches by id first and falls
+  // back to matching by content, so stale ids in an older snapshot still line up
+  // with the rows that replaced them.
+
+  interface HistorySnapshot {
+    date: string
+    entries: TimeEntry[]
+  }
+
+  /** How many steps each direction remembers. */
+  const HISTORY_LIMIT = 50
+
+  const undoStack = ref<HistorySnapshot[]>([])
+  const redoStack = ref<HistorySnapshot[]>([])
+  /**
+   * True while `restore` is writing. Stops the restore's own API calls from
+   * being mistaken for user edits (and thus re-recorded).
+   */
+  let applyingHistory = false
+
+  const canUndo = computed(() => undoStack.value.length > 0)
+  const canRedo = computed(() => redoStack.value.length > 0)
+
+  function snapshot(): HistorySnapshot {
+    return {
+      date: selectedDate.value,
+      entries: timeEntries.value.map((e) => ({ ...e })),
+    }
+  }
+
+  function sameEntry(a: TimeEntry, b: TimeEntry): boolean {
+    return (
+      a.projectId === b.projectId &&
+      a.startMinutes === b.startMinutes &&
+      a.endMinutes === b.endMinutes &&
+      a.note === b.note
+    )
+  }
+
+  function sameEntries(a: TimeEntry[], b: TimeEntry[]): boolean {
+    if (a.length !== b.length) {
+      return false
+    }
+
+    const byId = new Map(b.map((e) => [e.id, e]))
+
+    return a.every((e) => {
+      const other = byId.get(e.id)
+
+      return other !== undefined && sameEntry(e, other)
+    })
+  }
+
+  /** Content identity, used when ids differ because a row was re-created. */
+  function contentKey(e: TimeEntry): string {
+    return `${e.projectId}|${e.startMinutes}|${e.endMinutes}|${e.note}`
+  }
+
+  /**
+   * Run a mutation, recording the pre-state as one undo step if it changed
+   * anything.
+   *
+   * Recording is deliberately *after* the fact: a mutation that throws leaves
+   * both stacks untouched, and a no-op (a merge that turned out to be refused,
+   * an update that set the same values) does not add a step the user would have
+   * to press undo twice to get past.
+   */
+  async function withHistory<T>(mutate: () => Promise<T>): Promise<T> {
+    if (applyingHistory) {
+      return mutate()
+    }
+
+    const before = snapshot()
+    const result = await mutate()
+
+    if (!sameEntries(before.entries, timeEntries.value)) {
+      undoStack.value = [...undoStack.value, before].slice(-HISTORY_LIMIT)
+      redoStack.value = []
+    }
+
+    return result
+  }
+
+  /**
+   * Drive the entry list back to `target`, touching only what differs.
+   *
+   * Deletes run first so an update can never be briefly applied on top of a row
+   * that is on its way out.
+   */
+  async function restore(target: HistorySnapshot): Promise<void> {
+    applyingHistory = true
+
+    try {
+      if (target.date !== selectedDate.value) {
+        // History belongs to the day it was captured on; writing these rows onto
+        // another date would be worse than refusing.
+        return
+      }
+
+      const current = timeEntries.value.map((e) => ({ ...e }))
+      const matched = new Set<number>()
+      const pairs: { want: TimeEntry; have: TimeEntry | null }[] = []
+
+      // Pass 1 — same id, so the row survived and can be updated in place.
+      const byId = new Map(current.map((e) => [e.id, e]))
+
+      for (const want of target.entries) {
+        const have = byId.get(want.id)
+
+        if (have && !matched.has(have.id)) {
+          matched.add(have.id)
+          pairs.push({ want, have })
+        } else {
+          pairs.push({ want, have: null })
+        }
+      }
+
+      // Pass 2 — same content under a different id (an undone delete, whose
+      // re-created row got a fresh id).
+      const orphaned = current.filter((e) => !matched.has(e.id))
+
+      for (const pair of pairs) {
+        if (pair.have) {
+          continue
+        }
+
+        const idx = orphaned.findIndex((e) => contentKey(e) === contentKey(pair.want))
+
+        if (idx >= 0) {
+          const have = orphaned.splice(idx, 1)[0]
+          matched.add(have.id)
+          pair.have = have
+        }
+      }
+
+      const toDelete = current.filter((e) => !matched.has(e.id)).map((e) => e.id)
+      const toUpdate = pairs.filter(
+        (p): p is { want: TimeEntry; have: TimeEntry } =>
+          p.have !== null && !sameEntry(p.have, p.want),
+      )
+      const toCreate = pairs.filter((p) => p.have === null).map((p) => p.want)
+
+      await Promise.all(toDelete.map((id) => api.deleteTimeEntry(id)))
+
+      for (const { want, have } of toUpdate) {
+        await api.updateTimeEntry(
+          have.id,
+          want.projectId,
+          want.startMinutes,
+          want.endMinutes,
+          want.note,
+        )
+      }
+
+      for (const want of toCreate) {
+        await api.createTimeEntry(
+          target.date,
+          want.projectId,
+          want.startMinutes,
+          want.endMinutes,
+          want.note,
+        )
+      }
+
+      // Re-read rather than trusting the local reconstruction: re-created rows
+      // have ids only the backend knows, and every later diff depends on them.
+      timeEntries.value = await api.getTimeEntriesForDay(selectedDate.value)
+    } finally {
+      applyingHistory = false
+    }
+  }
+
+  /** @returns whether anything was undone, so a caller can avoid eating the keystroke. */
+  async function undo(): Promise<boolean> {
+    const target = undoStack.value[undoStack.value.length - 1]
+
+    if (!target || applyingHistory || target.date !== selectedDate.value) {
+      return false
+    }
+
+    undoStack.value = undoStack.value.slice(0, -1)
+    redoStack.value = [...redoStack.value, snapshot()].slice(-HISTORY_LIMIT)
+    await restore(target)
+
+    return true
+  }
+
+  async function redo(): Promise<boolean> {
+    const target = redoStack.value[redoStack.value.length - 1]
+
+    if (!target || applyingHistory || target.date !== selectedDate.value) {
+      return false
+    }
+
+    redoStack.value = redoStack.value.slice(0, -1)
+    undoStack.value = [...undoStack.value, snapshot()].slice(-HISTORY_LIMIT)
+    await restore(target)
+
+    return true
+  }
+
+  function clearHistory() {
+    undoStack.value = []
+    redoStack.value = []
+  }
+
   async function loadDay(date?: string, silent = false) {
-    if (date) {
+    // A different day has entirely different entries, so steps captured on the
+    // previous one are meaningless — and restoring them would write rows onto a
+    // date they never belonged to.
+    if (date && date !== selectedDate.value) {
       selectedDate.value = date
+      clearHistory()
     }
     if (!silent) {
       loading.value = true
@@ -185,15 +403,18 @@ export const useDayStore = defineStore('day', () => {
    * the gaps between them would count untracked time as work.
    */
   async function createEntries(projectId: number, ranges: EntryRange[], note: string) {
-    const created = await Promise.all(
-      ranges.map((r) =>
-        api.createTimeEntry(selectedDate.value, projectId, r.startMinutes, r.endMinutes, note),
-      ),
-    )
-    timeEntries.value = [...timeEntries.value, ...created].sort(
-      (a, b) => a.startMinutes - b.startMinutes,
-    )
-    return created
+    return withHistory(async () => {
+      const created = await Promise.all(
+        ranges.map((r) =>
+          api.createTimeEntry(selectedDate.value, projectId, r.startMinutes, r.endMinutes, note),
+        ),
+      )
+      timeEntries.value = [...timeEntries.value, ...created].sort(
+        (a, b) => a.startMinutes - b.startMinutes,
+      )
+
+      return created
+    })
   }
 
   async function createEntry(
@@ -206,7 +427,8 @@ export const useDayStore = defineStore('day', () => {
     return entry
   }
 
-  async function updateEntry(
+  /** Raw update, with no history step — for composites that record their own. */
+  async function applyUpdate(
     id: number,
     projectId: number,
     startMinutes: number,
@@ -228,22 +450,37 @@ export const useDayStore = defineStore('day', () => {
     }
   }
 
-  async function deleteEntry(id: number) {
-    await api.deleteTimeEntry(id)
-    timeEntries.value = timeEntries.value.filter((e) => e.id !== id)
+  async function updateEntry(
+    id: number,
+    projectId: number,
+    startMinutes: number,
+    endMinutes: number,
+    note: string,
+  ) {
+    await withHistory(() => applyUpdate(id, projectId, startMinutes, endMinutes, note))
   }
 
-  /**
-   * Delete several entries at once. Confirmation belongs to the caller — this
-   * is the same irreversible operation as `deleteEntry`, just repeated.
-   */
-  async function deleteEntries(ids: number[]) {
+  /** Raw delete, with no history step — for composites that record their own. */
+  async function removeEntries(ids: number[]) {
     if (ids.length === 0) {
       return
     }
 
     await Promise.all(ids.map((id) => api.deleteTimeEntry(id)))
     timeEntries.value = timeEntries.value.filter((e) => !ids.includes(e.id))
+  }
+
+  /**
+   * Delete several entries at once. Confirmation belongs to the caller — this
+   * is the same irreversible operation as `deleteEntry`, just repeated as one
+   * undo step.
+   */
+  async function deleteEntries(ids: number[]) {
+    await withHistory(() => removeEntries(ids))
+  }
+
+  async function deleteEntry(id: number) {
+    await deleteEntries([id])
   }
 
   /**
@@ -273,16 +510,19 @@ export const useDayStore = defineStore('day', () => {
       return false
     }
 
-    // Update before deleting: if the update is rejected (the backend refuses an
-    // inverted range) the later entry is still there to try again with.
-    await updateEntry(
-      previous.id,
-      previous.projectId,
-      previous.startMinutes,
-      Math.max(previous.endMinutes, target.endMinutes),
-      previous.note || target.note,
-    )
-    await deleteEntry(target.id)
+    // Validated before recording, so a refused merge leaves no undo step.
+    await withHistory(async () => {
+      // Update before deleting: if the update is rejected (the backend refuses
+      // an inverted range) the later entry is still there to try again with.
+      await applyUpdate(
+        previous.id,
+        previous.projectId,
+        previous.startMinutes,
+        Math.max(previous.endMinutes, target.endMinutes),
+        previous.note || target.note,
+      )
+      await removeEntries([target.id])
+    })
 
     return true
   }
@@ -355,11 +595,10 @@ export const useDayStore = defineStore('day', () => {
     // Keep the first non-blank note; the survivor's own note wins when set.
     const note = selected.find((e) => e.note.trim())?.note ?? ''
 
-    await updateEntry(survivor.id, survivor.projectId, start, end, note)
-
-    for (const entry of selected.slice(1)) {
-      await deleteEntry(entry.id)
-    }
+    await withHistory(async () => {
+      await applyUpdate(survivor.id, survivor.projectId, start, end, note)
+      await removeEntries(selected.slice(1).map((e) => e.id))
+    })
 
     return { ok: true }
   }
@@ -416,6 +655,11 @@ export const useDayStore = defineStore('day', () => {
     mergeWithPrevious,
     mergeBlocker,
     mergeEntries,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+    clearHistory,
     summary,
   }
 })

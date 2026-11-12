@@ -1,24 +1,13 @@
 <script setup lang="ts">
-  import { computed, ref, watch, nextTick, onMounted } from 'vue'
-  import { useRouter } from 'vue-router'
+  import { ref, watch, nextTick, onMounted } from 'vue'
   import { useSettingsStore } from '../stores/settings'
   import { useDayStore } from '../stores/day'
-  import { useProjectsStore } from '../stores/projects'
   import FilterRuleList from '../components/FilterRuleList.vue'
   import type { Settings } from '../schemas'
   import { api } from '../api'
 
-  const router = useRouter()
   const settingsStore = useSettingsStore()
   const dayStore = useDayStore()
-  const projectsStore = useProjectsStore()
-
-  const projectCount = computed(() => projectsStore.active.length)
-  const ruleCount = computed(() => settingsStore.projectMatchRules.length)
-
-  function goToProjects() {
-    router.push('/projects')
-  }
 
   const form = ref<Settings>({
     ...settingsStore.settings,
@@ -560,25 +549,6 @@
           <FilterRuleList />
         </section>
 
-        <section class="settings-section settings-section--card">
-          <h2>
-            Projects
-            <span class="count-pill">
-              {{ projectCount }} {{ projectCount === 1 ? 'project' : 'projects' }} · {{ ruleCount }}
-              {{ ruleCount === 1 ? 'rule' : 'rules' }}
-            </span>
-          </h2>
-
-          <p class="hint">
-            Time entries belong to projects, and auto-match rules turn recorded activity into
-            suggestions you can accept in one click.
-          </p>
-
-          <div>
-            <button class="btn-primary" @click="goToProjects">Manage projects →</button>
-          </div>
-        </section>
-
         <section class="settings-section">
           <h2>Claude AI</h2>
 
@@ -774,6 +744,10 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+
+    a {
+      color: inherit;
+    }
   }
 
   .settings-section--card {

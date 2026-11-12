@@ -318,3 +318,12 @@ export const DeviceCodePromptSchema = z.object({
   expiresIn: z.number(),
 })
 export type DeviceCodePrompt = z.infer<typeof DeviceCodePromptSchema>
+
+/** A release the app has found but not installed. */
+export const UpdateInfoSchema = z.object({
+  version: z.string(),
+  currentVersion: z.string(),
+  /** Release notes from `latest.json`, when the publisher included any. */
+  notes: z.string().nullable(),
+})
+export type UpdateInfo = z.infer<typeof UpdateInfoSchema>

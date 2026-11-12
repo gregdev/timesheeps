@@ -523,6 +523,44 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 - `externalBin` is likewise unnecessary: it demands a `-$TARGET_TRIPLE` filename (so a staging step)
   and buys nothing, since we never spawn the sidecar through the shell plugin
 
+### Claude must not run the *installed* sidecar
+
+- **Windows locks the image of a running executable**, so while Claude Desktop holds
+  `$INSTDIR\timesheeps-mcp.exe` open the installer cannot overwrite it and the upgrade fails until
+  Claude is killed by hand. Same problem in dev: `cargo build` cannot replace
+  `target\debug\timesheeps-mcp.exe` while Claude runs it
+- The fix is `commands::settings::stage_mcp_binary`: it copies the bundled sidecar to
+  `<app_local_data_dir>\mcp\<version>\timesheeps-mcp.exe` and Claude's config is pointed at **that**.
+  An upgrade then writes a fresh `$INSTDIR` file that no process has mapped
+- `refresh_claude_mcp_if_configured` runs on every launch and repoints an existing config at the
+  current version's copy, so Claude never keeps running a stale server after an upgrade (which would
+  otherwise refuse every call once the schema moved ahead of it). It only touches an entry whose
+  `command` already contains `timesheeps-mcp` — a config pointed elsewhere is left alone
+- `prune_staged_mcp_binaries` deletes other version directories at startup, best-effort. A copy
+  Claude is still running cannot be deleted and that is expected: it is removed on whichever launch
+  follows Claude's next restart
+- Order matters: prune first, then refresh. Deleting the copy Claude is *about* to be pointed away
+  from is harmless (the delete just fails), whereas refreshing first and pruning after would be
+  equally fine — the ordering is chosen so the stale directory is retried as early as possible
+- Consequence for the first upgrade to a build with this behaviour: the config still names the
+  `$INSTDIR` path, so that one install still needs Claude closed. Every subsequent upgrade does not
+
+### Auto-update (`updater.rs` + `UpdateBanner.vue`)
+
+- The loop **checks only**. It runs 60s after launch and then every 6 hours, emits
+  `update-available`, and records the result in `UpdaterState` so a frontend that mounts later can
+  read it back through `get_update_info`
+- Installing is an explicit click. It also refuses while a stopwatch runs (`install` returns
+  `TIMER_RUNNING`, surfaced as a confirm) because `TimerManager` is memory-only and a restart
+  discards it
+- This replaced a startup-only block that downloaded, installed and restarted unprompted. Since the
+  app is launched once and left running for weeks, that meant updates were usually never seen at
+  all — and when they were, they killed a timer
+- `AboutView` uses the same `check_for_updates` command as the banner, so the two cannot disagree;
+  it used to call the JS plugin's `check()` and then tell the user to go download from GitHub
+- A dismissal is stored per version in `localStorage` (`updateDismissedVersion`), so a waved-away
+  banner does not return on the next six-hourly check but a newer release still surfaces
+
 ### Settings defaults (Settings::default in models.rs)
 
 - `min_duration_secs`: 300

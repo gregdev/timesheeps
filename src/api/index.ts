@@ -16,6 +16,7 @@ import {
   SuggestedEntrySchema,
   TimeEntrySchema,
   TimerStateSchema,
+  UpdateInfoSchema,
   WindowSummaryItemSchema,
   type CalendarEvent,
   type DeviceCodePrompt,
@@ -25,6 +26,7 @@ import {
   type PeriodReview,
   type Settings,
   type TimerState,
+  type UpdateInfo,
 } from '../schemas'
 
 async function callArray<T>(
@@ -149,6 +151,21 @@ export const api = {
 
   getDayNote: (date: string) => invoke<string>('get_day_note', { date }),
   setDayNote: (date: string, note: string) => invoke<void>('set_day_note', { date, note }),
+
+  // ── Updates ──────────────────────────────────────────────────────────────
+  /** Result of the last background check, or null when nothing is pending. */
+  getUpdateInfo: (): Promise<UpdateInfo | null> =>
+    invoke<UpdateInfo | null>('get_update_info').then((v) => (v ? UpdateInfoSchema.parse(v) : null)),
+  /** Check now, instead of waiting for the next periodic pass. */
+  checkForUpdates: (): Promise<UpdateInfo | null> =>
+    invoke<UpdateInfo | null>('check_for_updates').then((v) =>
+      v ? UpdateInfoSchema.parse(v) : null,
+    ),
+  /**
+   * Download, install and restart. Rejects with `TIMER_RUNNING` while a
+   * stopwatch is going unless `force` is set — restarting would discard it.
+   */
+  installUpdate: (force = false) => invoke<void>('install_update', { force }),
 
   /** Hit counts / dead-rule detection over the last `days` days. */
   getRuleStats: (days = 30) => callArray(RuleStatSchema, 'get_rule_stats', { days }),

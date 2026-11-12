@@ -1,8 +1,8 @@
 <script setup lang="ts">
   import { ref, onMounted } from 'vue'
   import { getVersion } from '@tauri-apps/api/app'
-  import { check } from '@tauri-apps/plugin-updater'
   import { openUrl } from '@tauri-apps/plugin-opener'
+  import { api } from '../api'
 
   const RELEASES_URL = 'https://github.com/gregdev/timesheeps/releases/latest'
 
@@ -10,6 +10,8 @@
   const updateStatus = ref<'idle' | 'checking' | 'available' | 'up-to-date' | 'error'>('idle')
   const updateVersion = ref('')
   const errorMsg = ref('')
+  const installing = ref(false)
+  const timerRunning = ref(false)
 
   onMounted(async () => {
     try {
@@ -19,13 +21,18 @@
     }
   })
 
+  /**
+   * The same check the background loop runs, so the two cannot disagree: an idle
+   * app says "up to date" while a banner offers an install only if they share one
+   * code path.
+   */
   async function checkForUpdates() {
     updateStatus.value = 'checking'
     errorMsg.value = ''
     updateVersion.value = ''
 
     try {
-      const update = await check()
+      const update = await api.checkForUpdates()
 
       if (update) {
         updateStatus.value = 'available'
@@ -36,11 +43,31 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       updateStatus.value = 'error'
-      // The updater endpoint doesn't exist yet (no published release) or we're in dev mode
+      // No published release yet, offline, or running in dev mode.
       errorMsg.value =
         msg.toLowerCase().includes('json') || msg.toLowerCase().includes('fetch')
           ? 'Could not reach the update server.'
           : msg
+    }
+  }
+
+  async function installUpdate(force = false) {
+    installing.value = true
+    errorMsg.value = ''
+
+    try {
+      await api.installUpdate(force)
+      // Success restarts the process, so nothing below runs.
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+
+      if (msg.includes('TIMER_RUNNING')) {
+        timerRunning.value = true
+      } else {
+        errorMsg.value = msg
+      }
+
+      installing.value = false
     }
   }
 </script>
@@ -60,18 +87,31 @@
       <div class="update-section">
         <button
           class="btn-primary"
-          :disabled="updateStatus === 'checking'"
+          :disabled="updateStatus === 'checking' || installing"
           @click="checkForUpdates"
         >
           {{ updateStatus === 'checking' ? 'Checking…' : 'Check for updates' }}
         </button>
 
         <p v-if="updateStatus === 'up-to-date'" class="status-msg status-ok">You're up to date.</p>
-        <p v-else-if="updateStatus === 'available'" class="status-msg status-new">
-          Version {{ updateVersion }} is available. Download it from the
-          <a href="#" @click.prevent="openUrl(RELEASES_URL)">releases page</a>
-          .
-        </p>
+
+        <template v-else-if="updateStatus === 'available'">
+          <p v-if="timerRunning" class="status-msg status-new">
+            A timer is running — installing restarts the app and discards it.
+          </p>
+          <p v-else class="status-msg status-new">Version {{ updateVersion }} is available.</p>
+
+          <button class="btn-primary" :disabled="installing" @click="installUpdate(timerRunning)">
+            {{ installing ? 'Installing…' : timerRunning ? 'Restart anyway' : 'Install & restart' }}
+          </button>
+
+          <p v-if="errorMsg" class="status-msg status-err">{{ errorMsg }}</p>
+
+          <a href="#" class="release-link" @click.prevent="openUrl(RELEASES_URL)">
+            Or download it from the releases page
+          </a>
+        </template>
+
         <p v-else-if="updateStatus === 'error'" class="status-msg status-err">
           {{ errorMsg || 'Could not check for updates.' }}
           <a href="#" @click.prevent="openUrl(RELEASES_URL)">Check releases page.</a>

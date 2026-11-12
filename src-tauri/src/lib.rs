@@ -13,6 +13,7 @@ pub mod reporting;
 mod nl_query;
 mod reminder;
 mod timer;
+mod updater;
 
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -58,6 +59,9 @@ pub fn run() {
 
             // Initialise timer state
             app.manage(timer::TimerManager::new());
+
+            // Last known update state, so the frontend can read it on mount
+            app.manage(updater::UpdaterState::new());
 
             // Set up system tray
             let show = MenuItem::with_id(app, "show", "Show Timesheeps", true, None::<&str>)?;
@@ -137,19 +141,17 @@ pub fn run() {
             // can see meetings without a network call.
             calendar::start_sync(handle.clone());
 
-            // Check for updates silently in the background
-            let update_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                use tauri_plugin_updater::UpdaterExt;
-                if let Ok(updater) = update_handle.updater() {
-                    if let Ok(Some(update)) = updater.check().await {
-                        let _ = update
-                            .download_and_install(|_downloaded, _total| {}, || {})
-                            .await;
-                        update_handle.restart();
-                    }
-                }
-            });
+            // Check for updates periodically, and *only* check: installing is a
+            // deliberate action. The previous version downloaded and restarted
+            // unprompted, once, at startup — so in practice it either never ran
+            // or discarded an in-flight stopwatch.
+            updater::start(handle.clone());
+
+            // Claude runs a staged copy of the sidecar, not the installed one, so
+            // the installer can replace the latter while Claude is open. Repoint
+            // an existing config at this build's copy.
+            commands::settings::prune_staged_mcp_binaries(&handle);
+            commands::settings::refresh_claude_mcp_if_configured(&handle);
 
             Ok(())
         })
@@ -214,6 +216,9 @@ pub fn run() {
             commands::timer::get_timer_state,
             commands::window::hide_main_window,
             commands::window::show_main_window,
+            commands::updater::get_update_info,
+            commands::updater::check_for_updates,
+            commands::updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running timesheeps");

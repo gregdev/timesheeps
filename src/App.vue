@@ -9,6 +9,7 @@
   import { useTimerStore } from './stores/timer'
   import IdlePrompt from './components/IdlePrompt.vue'
   import DailyReminder from './components/DailyReminder.vue'
+  import UpdateBanner from './components/UpdateBanner.vue'
   import TooltipOverlay from './components/TooltipOverlay.vue'
   import ContextMenu from './components/ContextMenu.vue'
   import ScreenRecordingBanner from './components/ScreenRecordingBanner.vue'
@@ -151,6 +152,8 @@
 
 <template>
   <div class="app">
+    <UpdateBanner v-if="!isMiniView" />
+
     <nav class="app-nav" :class="{ 'app-nav--mini': isMiniView }">
       <template v-if="!isMiniView">
         <RouterLink to="/" class="nav-link" :class="{ active: route.path === '/' }">

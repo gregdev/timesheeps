@@ -10,4 +10,5 @@ pub mod review;
 pub mod settings;
 pub mod time_entries;
 pub mod timer;
+pub mod updater;
 pub mod window;

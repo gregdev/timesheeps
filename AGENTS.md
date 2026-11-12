@@ -8,7 +8,7 @@ A Tauri 2.0 desktop app that records the active window (app name + window title)
 
 ## Status
 
-Rust backend: ✅ complete and compiling on Windows (`cargo test` — 65 tests pass)
+Rust backend: ✅ complete and compiling on Windows (`cargo test` — 81 tests pass)
 Frontend Vue/TS: ✅ complete (`pnpm run build` exits 0, `pnpm exec eslint src` clean)
 Tauri config: ✅ complete, including bundling of the MCP sidecar
 
@@ -60,7 +60,9 @@ src-tauri/
     reporting.rs      # Date-range classification for the MCP tools (project/ticket/app totals)
     appicon.rs        # Windows exe icon extraction → PNG data URI (no-op elsewhere)
     activity.rs       # Background Win32 polling loop (tokio), idle detection, exe path capture
-    calendar.rs       # Microsoft 365 OAuth + Graph
+    autoaccept.rs     # Background sweep: turns settled suggestions into entries for the
+                      # last 21 days, independent of which day the UI is showing
+    calendar.rs       # Microsoft 365 OAuth (device code) + Graph, and the local calendar cache sync
     nl_query.rs       # Natural-language → search-token translation (+ the only pre-existing tests)
     reminder.rs       # Daily timesheet reminder: scheduler, prompt payload, native toast
     timer.rs          # In-memory timer
@@ -68,10 +70,12 @@ src-tauri/
       activity.rs           # get_activity_for_day, get_window_summary_for_day, search, deletes
       apps.rs               # get_app_icon
       calendar.rs           # M365 login/status/events/disconnect
+      day_notes.rs          # get_day_note / set_day_note (one note per local date)
       filter_rules.rs       # ignore rules CRUD
       permissions.rs        # screen-recording permission (macOS)
       project_match_rules.rs# rule CRUD + reorder + get_rule_stats + get_known_apps + suggestions
       projects.rs           # project CRUD + archive/unarchive/delete
+      review.rs             # get_period_review, accept_suggestions_for_day
       settings.rs           # settings + Claude MCP setup
       time_entries.rs       # time entry CRUD
       timer.rs              # timer commands
@@ -95,6 +99,8 @@ src/
     useFormat.ts      # shared formatMinutes/formatSeconds/formatElapsed/minutesToClock/localDateKey
     useRegex.ts       # client-side regex check for ticket patterns (JS, so not identical to Rust)
     useProjectGroups.ts # rolls per-project minutes up into parent/child totals
+    usePeriodReview.ts  # one get_period_review call → PeriodDayData map + review for the views
+    useTimesheetExport.ts # period → clipboard text / TSV for pasting into Harvest
     useAppColour.ts   # hashed colour per app name (avatar fallback)
     useAppIcon.ts     # memoised app icon fetch, shared module-level cache
     useContextMenu.ts, useEntryModal.ts, usePeriodGrid.ts
@@ -105,6 +111,8 @@ src/
     WeekView.vue, PayPeriodView.vue, SearchView.vue, AboutView.vue, TimerPopupView.vue
   components/
     DayNav.vue, TimeRuler.vue, TimeBlockItem.vue, EntryTrack.vue, SuggestedBlockItem.vue
+    DayNoteBar.vue         # Always-visible one-line "what did I do today" note
+    PeriodReviewPanel.vue  # "Needs attention" list for a week/period: suggestions, gaps, notes
     ActivityBlockItem.vue  # Read-only colored block (hashed app color), right-click menu
     TimelineCanvas.vue     # Grid + ruler + activity track + entry track; hosts ProjectPickerModal
     ProjectPickerModal.vue # Create/edit time entry: project combo + note + time range
@@ -224,6 +232,12 @@ src/
 ### DB migrations (`db::run_migrations`)
 
 - Versioned with `PRAGMA user_version`; bump `SCHEMA_VERSION` and add a `migrate_vN` step for shape changes
+- Current version is **5**:
+  - v4 adds `day_notes (date TEXT PRIMARY KEY, note, updated_at)`, created with
+    `CREATE TABLE IF NOT EXISTS` so an older build simply ignores it. There is no data migration.
+  - v5 adds the calendar cache: `calendar_events` (keyed `(i_cal_uid, started_at)`, with a LOCAL
+    `event_date`), plus `calendar_event_projects` (series → remembered project) and
+    `calendar_event_hidden` (series → never offer again). Also `IF NOT EXISTS`, no data migration.
 - Additive columns use the swallowed-error `ALTER TABLE … ADD COLUMN` pattern (no-op if present)
 - **Never `ALTER TABLE … RENAME` a table that other tables reference by foreign key.** SQLite
   rewrites the referencing keys when a table is renamed, so renaming a parent leaves children
@@ -286,22 +300,119 @@ Interstitial apps are only bridged when _both_ same-app runs clear the minimum.
 - `daily_reminder_enabled` defaults to **false**: a reminder appearing unbidden on upgrade is what
   the toggle exists to prevent
 
-### Auto-accepting suggestions (`src/stores/day.ts`)
+### Auto-accepting suggestions (`src-tauri/src/autoaccept.rs`)
 
-- The poller keeps a row **open** while a window stays focused, moving `ended_at` forward every
-  20s. An active session's suggestion therefore always ends "now"
-- A suggestion is only auto-accepted once it has been quiet for `AUTO_ACCEPT_SETTLE_MINUTES` (2).
-  Accepting it earlier freezes the sliver recorded so far into an entry, and every later refresh
-  then rejects the grown suggestion as an overlap — that is what produced 1-minute entries for
-  20-minute sessions
-- `loadDay` can run twice concurrently (the 30s interval plus the `activity-updated` event).
-  `autoAccepting` is a plain, non-reactive guard: without it, overlapping passes both see the same
-  suggestion as unclaimed and create a duplicate entry for it
-- Manual cleanup is a right-click on an entry → "Merge with previous entry"
-  (`dayStore.mergeWithPrevious`). It only merges **adjacent** entries of the same project (nothing
-  between them, non-overlapping), keeps the earlier entry's id and start, extends its end, and keeps
-  the earlier note unless it is blank. The menu item is only offered when the pair qualifies, and the
-  store re-checks before writing because the entries can change while the menu is open
+- **This lives in Rust now, not in `stores/day.ts`.** It used to run inside `loadDay`, so it only
+  applied to the date the user had open and only while the Timeline view was mounted. A day never
+  opened kept its suggestions forever — "auto-accept" meant "auto-accept once you look at it",
+  which is backwards for the app's purpose
+- `autoaccept::start(app)` mirrors `reminder::start`/`activity::start_polling`: a tokio loop ticking
+  every 60s that re-reads settings each tick, so toggling `auto_accept_suggested` needs no restart
+- Sweeps the last **21 days** every tick (a fortnight plus slack), so a period is fully covered
+  without rescanning months. It does not wait for the app to restart either — this app is left
+  running for weeks
+- A suggestion whose end is within **2 minutes of now** is skipped (today only): the poller keeps
+  extending the open row, and accepting the sliver freezes a 1-minute entry that then blocks the
+  real span as an overlap forever
+- Anything overlapping an existing entry is skipped, so manual logging always wins; ranges accepted
+  in the same pass claim each other
+- One failed insert is logged and skipped rather than aborting the sweep
+- Emits `activity-updated` (the same event the poller emits) only when it created something, so
+  `TimelineView` refreshes without its own spinner
+- The frontend must **not** auto-accept again — two writers would race. `day.ts` has no
+  auto-accept path at all now
+
+### Manual entry cleanup
+
+- Right-click an entry → "Merge with previous entry" (`dayStore.mergeWithPrevious`). It only merges
+  **adjacent** entries of the same project (nothing between them, non-overlapping), keeps the earlier
+  entry's id and start, extends its end, and keeps the earlier note unless it is blank. The menu item
+  is only offered when the pair qualifies, and the store re-checks before writing because the entries
+  can change while the menu is open
+
+### Period review (`reporting::period_review` + `PeriodReviewPanel.vue`)
+
+- One call per range returns, for every day: `trackedSecs`, `loggedSecs`, `unclassifiedSecs`,
+  `expectedMinutes`, the `entries`, the day `note`, unclaimed `suggestions` (already de-overlapped
+  against entries), `gaps`, and `attention` — plain-English reasons the day is unfinished.
+  `needsAttention` is precomputed so callers cannot forget the rule
+- The week and pay-period views used to make **two IPC calls per day** and infer "unfinished" from a
+  bare `hasActivity` flag, which could not see six tracked hours with one logged. Both now use
+  `composables/usePeriodReview.ts`
+- Gaps are only searched **inside** the day's recorded envelope (first record → last record), so a
+  quiet morning is not flagged. Merge of blocks and entries is done before the holes are found
+- Attention rules: unaccepted suggestions; untracked gaps; `tracked - logged > 30 min`; nothing
+  recorded on a weekday; `logged < expected - 30 min`. **Future dates and weekends never raise
+  attention**, and future dates never count toward `totalExpectedMinutes` (a period's remaining days
+  would otherwise all look overdue)
+- `expectedMinutes` applies **Monday–Friday only**; `totalExpectedMinutes` sums those days
+- `hasUnlogged` in `usePeriodGrid` now compares tracked vs logged minutes with a 30-minute
+  tolerance instead of testing `dayTotalMinutes === 0`
+- "Log" on a suggestion and "Log all" call `create_time_entry` / `accept_suggestions_for_day`, then
+  reload **silently** (`reload()` passes `silent` to `usePeriodReview.load`); a normal reload would
+  flash the whole grid behind a "Loading…" message
+
+### Day notes (`day_notes` + `DayNoteBar.vue`)
+
+- Window titles say which app was in front; they never say what the work *was*. One free-text line
+  per local date is the cheapest possible record of that, and it is what makes a fortnight-old
+  timesheet writable
+- `day_notes` is keyed by date; `set_day_note` upserts and a blank note **deletes** the row, so
+  "no note" has one representation
+- `DayNoteBar` sits under `DayNav` on the timeline, always visible rather than behind a menu.
+  Saves are debounced (700 ms) and flushed on blur / unmount
+- The bar captures the **date the edit started on**: a debounced save can land after navigation,
+  and writing it to `selectedDate` at that point would put the text on the wrong day.
+  `dayStore.saveDayNote(note, date?)` only updates the local copy when the date is still current
+- Included in `copyDay`, in the period clipboard export, and in the MCP's `get_day_summary` /
+  `get_period_review`
+
+### Period clipboard export (`composables/useTimesheetExport.ts`)
+
+- Two formats, both for the literal last step of the job: readable text (a section per day plus a
+  project roll-up) and TSV (`date, project, start, end, hours, note`) for a spreadsheet
+- Buttons live in `PayPeriodView`'s `PeriodNav` slot, not on the timeline: the day copy answers
+  "what did I do today", which was never the problem
+- Project names are padded to a common width so the text columns line up in a monospace paste
+
+### Calendar (`calendar.rs` + the `calendar_*` tables)
+
+- **Sign-in is device code, not an authorization code with a localhost redirect.** The old flow
+  needed an Azure app registration, a `http://localhost` redirect URI and a pasted client id — three
+  things to get wrong, and loopback listeners are blocked on some managed machines. Device code shows
+  a short code, the user types it at `microsoft.com/devicelogin`, and the app polls `/token`. The only
+  app-registration setting that matters is **Allow public client flows**; there is no redirect URI.
+  `start_m365_login` returns the prompt and spawns the poller; the frontend watches `get_m365_status`
+- The client id is a *public* identifier, not a secret, so a build can ship one. Resolution order:
+  the value passed in → `TIMESHEEPS_M365_CLIENT_ID` → the stored setting. `resolve_client_id`
+- **Meetings are cached locally** (`calendar_events`, synced every 15 min by `calendar::start_sync`).
+  The frontend used to call Graph once per day it happened to display, which meant the numbers
+  depended on which page was open and the MCP could not see meetings at all. `get_calendar_events`
+  now reads the cache; `refresh_calendar` forces a sync
+- `calendarView` windows are converted to explicit UTC instants. Sending a bare
+  `2026-11-12T00:00:00` while asking Graph for UTC made it read as *UTC* midnight — eleven hours
+  adrift at UTC+11, silently dropping the day's morning meetings
+- `@odata.nextLink` is followed (5 pages max). It used to be ignored, truncating a busy fortnight
+- Rotated refresh tokens are **persisted** (`CalendarFetch::refreshed` → `persist_refreshed`). The old
+  code refreshed on every call and dropped the result, which works until the rotation invalidates the
+  stored copy and the user is silently logged out
+- Cancelled occurrences never enter the cache; `declined` ones are stored but filtered out of both
+  the timeline and the review
+
+### Meeting candidates (`reporting::period_review` + `PeriodReviewPanel.vue`)
+
+- Meetings are the one part of the day window tracking cannot see, so they are a first-class review
+  item alongside suggestions: `DayReview.meetings`
+- A meeting is offered only when **nothing else covers it** — no entry overlaps it, and no merged
+  block resolving to a project overlaps it. All-day events, `declined` invitations and hidden series
+  are skipped
+- Identity is the **series** (`iCalUid`), not the occurrence. `calendar_event_projects` remembers the
+  project per series, so logging one standup pre-fills every future one; `calendar_event_hidden`
+  retires a series permanently (lunch, focus time)
+- `set_meeting_project` / `hide_meeting` are the commands; `set_meeting_project` is also an MCP write
+  tool, so Claude can apply "standups go to Lotteries" once and cover the whole fortnight
+- The panel's per-meeting project `<select>` is seeded from the remembered mapping and only written
+  when "Log" is pressed — choosing a project is not itself a commitment
 
 ### Window Activity panel (`db::get_window_summary_for_date`)
 
@@ -385,6 +496,10 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
   in `WRITE_TOOLS`. `validate_match_rules` is intentionally absent from that list: it writes nothing,
   so it stays usable when writes are off. There is no settings-write tool, so Claude cannot unlock
   itself
+- `get_period_review` is the tool for "what is still missing from my timesheet": it returns the same
+  per-day structure as the app's review panel (entries, unclaimed suggestions, gaps, notes,
+  `attention`) so Claude can work day by day. `set_day_note` is the one new write tool, and day notes
+  also appear in `get_day_summary`
 - Batches validate fully before writing anything, and tool failures set `isError: true` rather than
   burying a message in a successful payload
 
@@ -422,6 +537,7 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 - `auto_accept_suggested`: false
 - `daily_reminder_enabled`: false
 - `daily_reminder_time`: "17:00"
+- `expected_minutes_per_day`: 0 (off) — weekdays only, drives the period shortfall warning
 - `mcp_allow_writes`: **true** — the MCP write gate; the persisted row usually exists, don't assume
   the default
   These are the **code** defaults; the persisted `settings` table can hold different user-chosen values
@@ -450,6 +566,9 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 - Dark mode CSS tested visually but not on actual dark OS theme
 - IPC failures are only logged to the console in most stores; the day view surfaces `loadError`
 - Suggestions still respect `min_duration_secs`, so sub-minute visits produce none
+- The auto-accept sweep processes 21 days per tick while holding the DB mutex. That is the same
+  per-day pipeline the MCP runs over up to 100 days, and a tick takes milliseconds on the current
+  database, but it is the first place to look if IPC ever feels slow on a much larger history
 - Entries damaged by the old bottom-edge resize clamp (`end_minutes < start_minutes`) are now
   rejected at the write path (`db::insert/update_time_entry` bail on an inverted range), and the
   2026-10-28 rows `1682`/`1686` were repaired by hand to `22:17–22:22` and `22:35–22:40`

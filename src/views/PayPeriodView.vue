@@ -2,24 +2,22 @@
   import { ref, computed, watch } from 'vue'
   import { useRouter } from 'vue-router'
   import { format, addDays, subDays, differenceInDays, startOfWeek, parseISO } from 'date-fns'
-  import { api } from '../api'
   import { useSettingsStore } from '../stores/settings'
   import { useProjectsStore } from '../stores/projects'
   import { useDayStore } from '../stores/day'
   import { usePeriodGrid } from '../composables/usePeriodGrid'
+  import { usePeriodReview } from '../composables/usePeriodReview'
+  import { periodText, periodTsv } from '../composables/useTimesheetExport'
   import { localDateKey } from '../composables/useFormat'
-  import type { PeriodDayData } from '../composables/usePeriodGrid'
   import PeriodNav from '../components/PeriodNav.vue'
   import PeriodGrid from '../components/PeriodGrid.vue'
   import PeriodSummary from '../components/PeriodSummary.vue'
+  import PeriodReviewPanel from '../components/PeriodReviewPanel.vue'
 
   const settingsStore = useSettingsStore()
   const projectsStore = useProjectsStore()
   const dayStore = useDayStore()
   const router = useRouter()
-
-  const loading = ref(false)
-  const dayData = ref<Map<string, PeriodDayData>>(new Map())
 
   // ── Pay period computation ────────────────────────────────────────────────
 
@@ -81,32 +79,9 @@
 
   // ── Data loading ──────────────────────────────────────────────────────────
 
-  async function loadPeriod() {
-    loading.value = true
-    const dates = periodDayStrings.value
-
-    try {
-      const results = await Promise.all(
-        dates.map((date) =>
-          Promise.all([api.getTimeEntriesForDay(date), api.getWindowSummaryForDay(date)]),
-        ),
-      )
-      const map = new Map<string, PeriodDayData>()
-
-      for (let i = 0; i < dates.length; i++) {
-        const [entries, summary] = results[i]
-        map.set(dates[i], { date: dates[i], entries, hasActivity: summary.length > 0 })
-      }
-
-      dayData.value = map
-    } catch (err) {
-      console.error('[timesheeps] loadPeriod failed:', err)
-    } finally {
-      loading.value = false
-    }
-  }
-
-  watch(periodDayStrings, loadPeriod, { immediate: true })
+  // One call returns every day's entries *and* its review state, replacing the
+  // 2-per-day IPC fan-out this view used to issue.
+  const { loading, review, dayData, reload } = usePeriodReview(periodDayStrings)
 
   // ── Navigation ────────────────────────────────────────────────────────────
 
@@ -127,8 +102,14 @@
     router.push('/')
   }
 
-  const { projectDayMinutes, dayTotalMinutes, hasUnlogged, fmtMin, entriesInRange, usedProjectIds } =
-    usePeriodGrid(dayData)
+  const {
+    projectDayMinutes,
+    dayTotalMinutes,
+    hasUnlogged,
+    fmtMin,
+    entriesInRange,
+    usedProjectIds,
+  } = usePeriodGrid(dayData)
 
   const gridColumns = computed(() => `160px repeat(${periodLength.value}, minmax(50px, 1fr))`)
 
@@ -138,6 +119,36 @@
   })
 
   const allEntries = computed(() => entriesInRange())
+
+  // ── Copy for Harvest ──────────────────────────────────────────────────────
+
+  const copied = ref<'text' | 'tsv' | null>(null)
+
+  function projectName(id: number): string {
+    return projectsStore.projects.find((p) => p.id === id)?.name ?? 'Unknown'
+  }
+
+  function projectColor(id: number): string {
+    return projectsStore.projects.find((p) => p.id === id)?.color ?? 'var(--border)'
+  }
+
+  async function copyPeriod(tsv = false) {
+    if (!review.value) {
+      return
+    }
+
+    const text = tsv ? periodTsv(review.value, projectName) : periodText(review.value, projectName)
+
+    try {
+      await navigator.clipboard.writeText(text)
+      copied.value = tsv ? 'tsv' : 'text'
+      setTimeout(() => {
+        copied.value = null
+      }, 2000)
+    } catch (err) {
+      console.error('[timesheeps] clipboard write failed:', err)
+    }
+  }
 </script>
 
 <template>
@@ -154,12 +165,36 @@
       <span class="period-type-badge">
         {{ freq === 'fortnightly' ? 'Fortnightly' : 'Weekly' }}
       </span>
+
+      <div class="nav-copy">
+        <button
+          class="btn-ghost copy-btn"
+          title="Copy this period as readable text, ready to paste into a timesheet"
+          @click="copyPeriod(false)"
+        >
+          {{ copied === 'text' ? '✓ Copied' : 'Copy period' }}
+        </button>
+        <button
+          class="btn-ghost copy-btn"
+          title="Copy as TSV (date, project, start, end, hours, note) for a spreadsheet"
+          @click="copyPeriod(true)"
+        >
+          {{ copied === 'tsv' ? '✓ TSV' : 'TSV' }}
+        </button>
+      </div>
     </PeriodNav>
 
     <div class="view-body">
       <div v-if="loading" class="loading-msg">Loading…</div>
 
       <div v-else class="period-scroll">
+        <PeriodReviewPanel
+          :review="review"
+          :project-name="projectName"
+          :project-color="projectColor"
+          @navigate="navigateTo"
+          @changed="reload"
+        />
         <PeriodGrid
           :days="periodDays"
           :day-strings="periodDayStrings"
@@ -216,5 +251,18 @@
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 2px var(--space-2);
+  }
+
+  .nav-copy {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .copy-btn {
+    font-size: var(--text-xs);
+    padding: var(--space-1) var(--space-2);
+    white-space: nowrap;
   }
 </style>

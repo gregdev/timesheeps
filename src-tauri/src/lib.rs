@@ -1,5 +1,6 @@
 mod activity;
 mod appicon;
+mod autoaccept;
 mod calendar;
 mod commands;
 // `db`, `matcher` and `models` are public so the `timesheeps-mcp` binary (a
@@ -128,6 +129,14 @@ pub fn run() {
             // Daily timesheet reminder (fires once per local day, when enabled)
             reminder::start(handle.clone());
 
+            // Auto-accept suggestions for the recent past, independent of which
+            // day the UI happens to be showing.
+            autoaccept::start(handle.clone());
+
+            // Keep the local calendar cache warm, so period reviews and the MCP
+            // can see meetings without a network call.
+            calendar::start_sync(handle.clone());
+
             // Check for updates silently in the background
             let update_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -162,6 +171,7 @@ pub fn run() {
             commands::calendar::start_m365_login,
             commands::calendar::get_m365_status,
             commands::calendar::get_calendar_events,
+            commands::calendar::refresh_calendar,
             commands::calendar::disconnect_m365,
             commands::projects::get_projects,
             commands::projects::create_project,
@@ -173,6 +183,12 @@ pub fn run() {
             commands::time_entries::create_time_entry,
             commands::time_entries::update_time_entry,
             commands::time_entries::delete_time_entry,
+            commands::day_notes::get_day_note,
+            commands::day_notes::set_day_note,
+            commands::review::get_period_review,
+            commands::review::accept_suggestions_for_day,
+            commands::review::set_meeting_project,
+            commands::review::hide_meeting,
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::settings::check_claude_mcp,

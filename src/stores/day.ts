@@ -4,7 +4,6 @@ import { addDays, subDays, parseISO } from 'date-fns'
 import { api } from '../api'
 import { isoToLocalMinutes, localDateKey } from '../composables/useFormat'
 import type { EntryRange } from '../composables/useEntryModal'
-import { useSettingsStore } from './settings'
 import type {
   ActivityBlock,
   CalendarEvent,
@@ -12,22 +11,6 @@ import type {
   TimeEntry,
   WindowSummaryItem,
 } from '../schemas'
-
-/**
- * How long a suggestion must be quiet before it may be auto-accepted, in
- * minutes.
- *
- * The poller keeps a row *open* while a window stays focused: every tick moves
- * `ended_at` forward, so an active session's suggestion always ends "now".
- * Auto-accepting that snapshot writes an entry for however much had been
- * recorded at that instant (often a single minute), and every later refresh
- * then skips the grown suggestion because it overlaps the entry just created —
- * leaving a permanent 1-minute entry for a 20-minute session. Waiting for the
- * block to stop moving means the entry covers the whole session.
- *
- * Comfortably larger than the 20s poll interval and the 30s UI refresh.
- */
-const AUTO_ACCEPT_SETTLE_MINUTES = 2
 
 export const useDayStore = defineStore('day', () => {
   const selectedDate = ref(localDateKey(new Date()))
@@ -37,12 +20,14 @@ export const useDayStore = defineStore('day', () => {
   const windowSummary = ref<WindowSummaryItem[]>([])
   const rawSuggestions = ref<SuggestedEntry[]>([])
   const calendarEvents = ref<CalendarEvent[]>([])
+  /**
+   * The user's own one-line note for the day. Window titles record which app
+   * was in front; only this says what the work was, which is the part a
+   * timesheet written two weeks later actually needs.
+   */
+  const dayNote = ref('')
   const loading = ref(false)
   const loadError = ref<string | null>(null)
-  // `loadDay` can be in flight twice (the 30s interval plus the poller's
-  // `activity-updated` event). Two overlapping passes would both see the same
-  // suggestion as unclaimed and each create an entry for it.
-  let autoAccepting = false
 
   const isViewingToday = computed(() => selectedDate.value === currentDate.value)
 
@@ -272,16 +257,18 @@ export const useDayStore = defineStore('day', () => {
       loading.value = true
     }
     try {
-      const [blocks, entries, winSummary, suggestions] = await Promise.all([
+      const [blocks, entries, winSummary, suggestions, note] = await Promise.all([
         api.getActivityForDay(selectedDate.value),
         api.getTimeEntriesForDay(selectedDate.value),
         api.getWindowSummaryForDay(selectedDate.value),
         api.getSuggestedEntriesForDay(selectedDate.value),
+        api.getDayNote(selectedDate.value),
       ])
       activityBlocks.value = blocks
       timeEntries.value = entries
       windowSummary.value = winSummary
       rawSuggestions.value = suggestions
+      dayNote.value = note
 
       // Load calendar events (fire-and-forget — don't block on failure)
       api
@@ -294,71 +281,11 @@ export const useDayStore = defineStore('day', () => {
         })
       loadError.value = null
 
-      // Auto-accept suggestions if enabled
-      const settingsStore = useSettingsStore()
-
-      if (settingsStore.settings.autoAcceptSuggested && suggestions.length > 0 && !autoAccepting) {
-        autoAccepting = true
-
-        try {
-          const now = new Date()
-          const nowMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60
-          // Ranges accepted in this pass count as "existing" so two overlapping
-          // suggestions cannot both become entries.
-          const claimed: { start: number; end: number }[] = []
-          let created = false
-
-          for (const s of suggestions) {
-            const startMin = isoToMinutes(s.startedAt)
-            const endMin = isoToMinutes(s.endedAt)
-
-            if (endMin <= startMin) {
-              continue
-            }
-
-            // Still being recorded — the poller extends this block's end on
-            // every tick, so its length is not final yet. Accepting it now
-            // would freeze the sliver recorded so far into an entry that then
-            // blocks the real span as an "overlap" on every later refresh.
-            // A suggestion ending in the future (clock skew) also lands here.
-            if (nowMinutes - endMin < AUTO_ACCEPT_SETTLE_MINUTES) {
-              continue
-            }
-
-            // Only auto-create entries that don't overlap existing ones
-            const overlapsEntry = entries.some(
-              (e) => e.startMinutes < endMin && e.endMinutes > startMin,
-            )
-            const overlapsClaimed = claimed.some((c) => c.start < endMin && c.end > startMin)
-
-            if (overlapsEntry || overlapsClaimed) {
-              continue
-            }
-
-            try {
-              await api.createTimeEntry(
-                selectedDate.value,
-                s.projectId,
-                Math.round(startMin),
-                Math.round(endMin),
-                '',
-              )
-              claimed.push({ start: startMin, end: endMin })
-              created = true
-            } catch (e) {
-              console.error('[timesheeps] auto-accept failed:', e)
-            }
-          }
-
-          // Reload to pick up newly created entries; `suggestedEntries` filters
-          // out anything that now overlaps, so no re-fetch is needed.
-          if (created) {
-            timeEntries.value = await api.getTimeEntriesForDay(selectedDate.value)
-          }
-        } finally {
-          autoAccepting = false
-        }
-      }
+      // Suggestions are auto-accepted by the Rust sweep in `autoaccept.rs`,
+      // which runs for every day of the last three weeks regardless of which
+      // date is on screen. It used to live here, inside `loadDay` — so a day
+      // the user never opened kept its suggestions forever, and the setting
+      // only meant "auto-accept once you look at it".
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       loadError.value = msg
@@ -394,6 +321,26 @@ export const useDayStore = defineStore('day', () => {
       if (wasViewingToday) {
         loadDay(today)
       }
+    }
+  }
+
+  /**
+   * Save a day's note.
+   *
+   * `date` is explicit because a debounced save can land after the user has
+   * navigated: writing it to `selectedDate` at that point would put the text on
+   * the wrong day. The local copy is only updated when the save is for the day
+   * currently on screen.
+   */
+  async function saveDayNote(note: string, date = selectedDate.value): Promise<void> {
+    if (date === selectedDate.value) {
+      dayNote.value = note
+    }
+
+    try {
+      await api.setDayNote(date, note)
+    } catch (err) {
+      console.error('[timesheeps] saving the day note failed:', err)
     }
   }
 
@@ -652,6 +599,7 @@ export const useDayStore = defineStore('day', () => {
     timeEntries,
     windowSummary,
     calendarEvents,
+    dayNote,
     suggestedEntries,
     loading,
     loadError,
@@ -661,6 +609,7 @@ export const useDayStore = defineStore('day', () => {
     prevDay,
     goToday,
     refreshCurrentDate,
+    saveDayNote,
     createEntry,
     createEntries,
     updateEntry,

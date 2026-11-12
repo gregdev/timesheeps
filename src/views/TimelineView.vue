@@ -3,6 +3,7 @@
   import { listen } from '@tauri-apps/api/event'
   import { format, parseISO } from 'date-fns'
   import DayNav from '../components/DayNav.vue'
+  import DayNoteBar from '../components/DayNoteBar.vue'
   import TimelineCanvas from '../components/TimelineCanvas.vue'
   import TimelineZoomControl from '../components/TimelineZoomControl.vue'
   import WindowSummary from '../components/WindowSummary.vue'
@@ -128,6 +129,13 @@
       lines.push(`Total: ${formatDuration(total)}`)
     }
 
+    // The day note is the only record of what the work *was*, so it belongs in
+    // the paste even when it is the only thing on the day.
+    if (dayStore.dayNote.trim()) {
+      lines.push('')
+      lines.push(`Note: ${dayStore.dayNote.trim()}`)
+    }
+
     navigator.clipboard
       .writeText(lines.join('\n'))
       .then(() => {
@@ -211,6 +219,8 @@
         </button>
       </div>
     </div>
+
+    <DayNoteBar />
 
     <div class="main-area">
       <TimelineCanvas class="timeline-col" />

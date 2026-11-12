@@ -56,6 +56,7 @@ export const useSettingsStore = defineStore('settings', () => {
     dailyReminderEnabled: false,
     dailyReminderTime: '17:00',
     mcpAllowWrites: true,
+    expectedMinutesPerDay: 0,
   })
   const colourScheme = ref<ColourScheme>(
     (localStorage.getItem('colourScheme') as ColourScheme | null) ?? 'system',
@@ -82,6 +83,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const m365Status = ref<M365Status>({ connected: false, accountName: '' })
   const m365Connecting = ref(false)
   const m365ClientId = ref('')
+  /** The code the user types at microsoft.com/devicelogin, while connecting. */
+  const m365DeviceCode = ref<string | null>(null)
+  const m365VerificationUri = ref('')
 
   async function load() {
     const [s, rules, matchRules, m365] = await Promise.all([
@@ -239,28 +243,41 @@ export const useSettingsStore = defineStore('settings', () => {
     await save(updated)
   }
 
+  /**
+   * Begin device-code sign-in.
+   *
+   * The user is shown a short code and a URL rather than being bounced through a
+   * localhost redirect: no callback listener to be blocked by an endpoint agent,
+   * and nothing to configure in Azure beyond "allow public client flows".
+   */
   async function connectM365() {
     m365Connecting.value = true
+    m365DeviceCode.value = null
 
     try {
-      const clientId = m365ClientId.value.trim()
+      const prompt = await api.startM365Login(m365ClientId.value.trim() || undefined)
+      m365DeviceCode.value = prompt.userCode
+      m365VerificationUri.value = prompt.verificationUri
+      window.open(prompt.verificationUri, '_blank')
 
-      if (!clientId) {
-        throw new Error('Client ID is required')
-      }
-
-      const { url } = await api.startM365Login(clientId)
-      window.open(url, '_blank')
-      // Poll for connection status
-      await pollM365Status()
+      await pollM365Status(prompt.expiresIn)
     } finally {
       m365Connecting.value = false
+      m365DeviceCode.value = null
     }
   }
 
-  async function pollM365Status() {
-    // Poll for up to 2 minutes for the OAuth callback to complete
-    for (let i = 0; i < 24; i++) {
+  /**
+   * Poll until Microsoft reports the code was used.
+   *
+   * The backend is doing the token exchange; this only watches the status. The
+   * poll runs for as long as the code is valid, because the user may well be
+   * typing it on their phone.
+   */
+  async function pollM365Status(expiresInSecs = 900) {
+    const attempts = Math.ceil(expiresInSecs / 5)
+
+    for (let i = 0; i < attempts; i++) {
       await new Promise((r) => setTimeout(r, 5000))
 
       try {
@@ -301,6 +318,8 @@ export const useSettingsStore = defineStore('settings', () => {
     m365Status,
     m365Connecting,
     m365ClientId,
+    m365DeviceCode,
+    m365VerificationUri,
     load,
     save,
     createRule,

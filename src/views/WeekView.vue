@@ -2,24 +2,21 @@
   import { ref, computed, watch } from 'vue'
   import { useRouter } from 'vue-router'
   import { format, addDays, addWeeks, subWeeks, startOfWeek } from 'date-fns'
-  import { api } from '../api'
   import { useSettingsStore } from '../stores/settings'
   import { useProjectsStore } from '../stores/projects'
   import { useDayStore } from '../stores/day'
   import { usePeriodGrid } from '../composables/usePeriodGrid'
+  import { usePeriodReview } from '../composables/usePeriodReview'
   import { localDateKey } from '../composables/useFormat'
-  import type { PeriodDayData } from '../composables/usePeriodGrid'
   import PeriodNav from '../components/PeriodNav.vue'
   import PeriodGrid from '../components/PeriodGrid.vue'
   import PeriodSummary from '../components/PeriodSummary.vue'
+  import PeriodReviewPanel from '../components/PeriodReviewPanel.vue'
 
   const settingsStore = useSettingsStore()
   const projectsStore = useProjectsStore()
   const dayStore = useDayStore()
   const router = useRouter()
-
-  const loading = ref(false)
-  const dayData = ref<Map<string, PeriodDayData>>(new Map())
 
   const weekStartsOn = computed(() => settingsStore.settings.weekStartsOn as 0 | 1)
   const weekStart = ref(startOfWeek(new Date(), { weekStartsOn: weekStartsOn.value }))
@@ -47,32 +44,8 @@
     return weekDayStrings.value.includes(todayStr)
   })
 
-  async function loadWeek() {
-    loading.value = true
-    const dates = weekDayStrings.value
-
-    try {
-      const results = await Promise.all(
-        dates.map((date) =>
-          Promise.all([api.getTimeEntriesForDay(date), api.getWindowSummaryForDay(date)]),
-        ),
-      )
-      const map = new Map<string, PeriodDayData>()
-
-      for (let i = 0; i < dates.length; i++) {
-        const [entries, summary] = results[i]
-        map.set(dates[i], { date: dates[i], entries, hasActivity: summary.length > 0 })
-      }
-
-      dayData.value = map
-    } catch (err) {
-      console.error('[timesheeps] loadWeek failed:', err)
-    } finally {
-      loading.value = false
-    }
-  }
-
-  watch(weekDayStrings, loadWeek, { immediate: true })
+  // One call for the whole week: entries plus review state per day.
+  const { loading, review, dayData, reload } = usePeriodReview(weekDayStrings)
 
   // Changing "week starts on" should move the visible week, but only while the
   // user is looking at the current one — otherwise it would yank them away from
@@ -100,8 +73,14 @@
     router.push('/')
   }
 
-  const { projectDayMinutes, dayTotalMinutes, hasUnlogged, fmtMin, entriesInRange, usedProjectIds } =
-    usePeriodGrid(dayData)
+  const {
+    projectDayMinutes,
+    dayTotalMinutes,
+    hasUnlogged,
+    fmtMin,
+    entriesInRange,
+    usedProjectIds,
+  } = usePeriodGrid(dayData)
 
   const weekProjects = computed(() => {
     const used = usedProjectIds()
@@ -109,6 +88,14 @@
   })
 
   const allEntries = computed(() => entriesInRange())
+
+  function projectName(id: number): string {
+    return projectsStore.projects.find((p) => p.id === id)?.name ?? 'Unknown'
+  }
+
+  function projectColor(id: number): string {
+    return projectsStore.projects.find((p) => p.id === id)?.color ?? 'var(--border)'
+  }
 
   const gridColumns = '180px repeat(7, 1fr)'
 </script>
@@ -129,6 +116,13 @@
       <div v-if="loading" class="loading-msg">Loading…</div>
 
       <template v-else>
+        <PeriodReviewPanel
+          :review="review"
+          :project-name="projectName"
+          :project-color="projectColor"
+          @navigate="navigateTo"
+          @changed="reload"
+        />
         <PeriodGrid
           :days="weekDays"
           :day-strings="weekDayStrings"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref, watch, nextTick, onMounted } from 'vue'
+  import { ref, watch, computed, nextTick, onMounted } from 'vue'
   import { useSettingsStore } from '../stores/settings'
   import { useDayStore } from '../stores/day'
   import FilterRuleList from '../components/FilterRuleList.vue'
@@ -113,6 +113,18 @@
     () => showSaved('colourScheme'),
   )
 
+  /**
+   * The DB stores minutes; people think in hours. Rounding happens here so a
+   * typed `7.5` becomes exactly 450 minutes and never a fractional i64.
+   */
+  const expectedHours = computed({
+    get: () => form.value.expectedMinutesPerDay / 60,
+    set: (value: number) => {
+      const hours = Number.isFinite(value) ? Math.min(24, Math.max(0, value)) : 0
+      form.value.expectedMinutesPerDay = Math.round(hours * 60)
+    },
+  })
+
   type ClaudeStatus = 'idle' | 'loading' | 'success' | 'already' | 'error'
   const claudeStatus = ref<ClaudeStatus>('idle')
   const claudeError = ref('')
@@ -127,6 +139,26 @@
     } catch (e: unknown) {
       claudeStatus.value = 'error'
       claudeError.value = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  const calendarRefreshing = ref(false)
+
+  /**
+   * Pull the calendar cache forward, then reload the day so the timeline picks
+   * the new meetings up. The background sync does this on its own every fifteen
+   * minutes; this button exists for the case where a meeting was just moved.
+   */
+  async function refreshCalendar() {
+    calendarRefreshing.value = true
+
+    try {
+      await api.refreshCalendar()
+      await dayStore.loadDay()
+    } catch (err) {
+      console.error('[timesheeps] calendar refresh failed:', err)
+    } finally {
+      calendarRefreshing.value = false
     }
   }
 
@@ -401,8 +433,32 @@
               </Transition>
             </label>
             <p class="field-hint">
-              When a project match rule identifies your activity, automatically create a time entry
-              instead of showing a dashed suggestion that needs to be accepted.
+              When a project match rule identifies your activity, create the time entry without
+              asking. This runs in the background for the last three weeks, so days you never open
+              are still filled in — it does not wait for you to look at them.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label>
+              Expected hours per working day
+              <Transition name="check">
+                <span v-if="savedField === 'expectedMinutesPerDay'" class="field-check">✓</span>
+              </Transition>
+            </label>
+
+            <input
+              v-model.number="expectedHours"
+              type="number"
+              min="0"
+              max="24"
+              step="0.25"
+              @change="trackField('expectedMinutesPerDay')"
+            />
+
+            <p class="field-hint">
+              Monday–Friday only. The period views flag any day that falls short, and show how far
+              the period is from its target. Set to 0 to turn the target off.
             </p>
           </div>
 
@@ -607,20 +663,9 @@
           <h2>Microsoft 365 Calendar</h2>
 
           <label>
-            Connect your Outlook / Microsoft 365 calendar to see meetings on your timeline. You'll
-            need an
-            <a
-              href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
-              target="_blank"
-              rel="noopener"
-            >
-              Azure AD app registration
-            </a>
-            with the redirect URI
-            <code>http://localhost</code>
-            and the
-            <em>Calendars.Read</em>
-            permission.
+            Connect your Outlook / Microsoft 365 calendar so meetings appear on your timeline and
+            in the period review. Meetings leave no trace in window activity, so without this the
+            biggest part of a normal day is invisible when you fill in a timesheet.
           </label>
 
           <div
@@ -632,29 +677,54 @@
               ✓ Connected as
               <strong>{{ settingsStore.m365Status.accountName }}</strong>
             </span>
+            <button
+              class="btn-secondary"
+              :disabled="calendarRefreshing"
+              @click="refreshCalendar"
+            >
+              {{ calendarRefreshing ? 'Refreshing…' : 'Refresh now' }}
+            </button>
             <button class="btn-primary" @click="settingsStore.disconnectM365()">Disconnect</button>
           </div>
 
-          <div v-else class="claude-row" style="margin-top: 0.75rem; flex-wrap: wrap; gap: 0.5rem">
-            <input
-              v-model="settingsStore.m365ClientId"
-              type="text"
-              placeholder="Azure AD Application (client) ID…"
-              style="width: 280px"
-            />
-            <button
-              class="btn-primary"
-              :disabled="settingsStore.m365Connecting || !settingsStore.m365ClientId.trim()"
-              @click="settingsStore.connectM365()"
-            >
-              {{ settingsStore.m365Connecting ? 'Connecting…' : 'Connect' }}
-            </button>
+          <div v-else-if="settingsStore.m365DeviceCode" class="device-code" style="margin-top: 0.75rem">
+            <p class="field-hint">Enter this code at {{ settingsStore.m365VerificationUri }}:</p>
+            <p class="device-code-value">{{ settingsStore.m365DeviceCode }}</p>
+            <p class="field-hint">Waiting for you to finish signing in…</p>
           </div>
 
-          <p class="field-hint" style="margin-top: 0.5rem">
-            A browser window will open for you to sign in to your Microsoft account. After
-            authorising, you'll be redirected back and the app will store your tokens locally.
-          </p>
+          <div v-else style="margin-top: 0.75rem">
+            <div class="claude-row" style="flex-wrap: wrap; gap: 0.5rem">
+              <input
+                v-model="settingsStore.m365ClientId"
+                type="text"
+                placeholder="App (client) ID — only needed once…"
+                style="width: 280px"
+              />
+              <button
+                class="btn-primary"
+                :disabled="settingsStore.m365Connecting"
+                @click="settingsStore.connectM365()"
+              >
+                {{ settingsStore.m365Connecting ? 'Waiting for sign-in…' : 'Connect' }}
+              </button>
+            </div>
+
+            <p class="field-hint" style="margin-top: 0.5rem">
+              You sign in with a short code — no redirect URL, no local port, nothing to get wrong.
+              The client ID comes from an
+              <a
+                href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+                target="_blank"
+                rel="noopener"
+              >
+                app registration
+              </a>
+              with <em>Allow public client flows</em> enabled and the delegated
+              <em>Calendars.Read</em> permission. A build from its author can ship that ID, so this
+              field is empty only the first time.
+            </p>
+          </div>
         </section>
       </div>
     </div>
@@ -675,6 +745,22 @@
     font-weight: 600;
     color: var(--success);
     margin-left: var(--space-1);
+  }
+
+  .device-code {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .device-code-value {
+    margin: 0;
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-xl);
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--primary);
+    user-select: all;
   }
 
   .check-enter-active {

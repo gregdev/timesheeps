@@ -6,6 +6,8 @@ import {
   FilterRuleSchema,
   KnownAppSchema,
   M365StatusSchema,
+  DeviceCodePromptSchema,
+  PeriodReviewSchema,
   ProjectMatchRuleSchema,
   ProjectSchema,
   RuleStatSchema,
@@ -16,9 +18,11 @@ import {
   TimerStateSchema,
   WindowSummaryItemSchema,
   type CalendarEvent,
+  type DeviceCodePrompt,
   type FilterRuleType,
   type M365Status,
   type MatchCondition,
+  type PeriodReview,
   type Settings,
   type TimerState,
 } from '../schemas'
@@ -132,6 +136,20 @@ export const api = {
   getSuggestedEntriesForDay: (date: string) =>
     callArray(SuggestedEntrySchema, 'get_suggested_entries_for_day', { date }),
 
+  // ── Period review + day notes ────────────────────────────────────────────
+  /** Everything the period views need, in one call. */
+  getPeriodReview: (startDate: string, endDate: string, gapMinSecs?: number) =>
+    callOne<PeriodReview>(PeriodReviewSchema, 'get_period_review', {
+      startDate,
+      endDate,
+      gapMinSecs,
+    }),
+  /** Create entries for every unclaimed suggestion on one day; returns how many. */
+  acceptSuggestionsForDay: (date: string) => invoke<number>('accept_suggestions_for_day', { date }),
+
+  getDayNote: (date: string) => invoke<string>('get_day_note', { date }),
+  setDayNote: (date: string, note: string) => invoke<void>('set_day_note', { date, note }),
+
   /** Hit counts / dead-rule detection over the last `days` days. */
   getRuleStats: (days = 30) => callArray(RuleStatSchema, 'get_rule_stats', { days }),
   /** Apps seen in recent activity, for the value picker. */
@@ -147,12 +165,27 @@ export const api = {
     invoke<number>('delete_activity_by_app_title', { appName, windowTitle }),
 
   // ── Microsoft 365 Calendar ────────────────────────────────────────────
-  startM365Login: (clientId: string): Promise<{ url: string }> =>
-    invoke('start_m365_login', { clientId }),
+  /**
+   * Start device-code sign-in. Returns the code to show the user; the backend
+   * polls Microsoft in the background and the status flips to connected.
+   */
+  startM365Login: (clientId?: string): Promise<DeviceCodePrompt> =>
+    callOne<DeviceCodePrompt>(DeviceCodePromptSchema, 'start_m365_login', {
+      clientId: clientId?.trim() || null,
+    }),
   getM365Status: (): Promise<M365Status> => callOne(M365StatusSchema, 'get_m365_status'),
   getCalendarEvents: (date: string): Promise<CalendarEvent[]> =>
     callArray(CalendarEventSchema, 'get_calendar_events', { date }),
+  /** Pull the calendar cache forward instead of waiting for the next tick. */
+  refreshCalendar: () => invoke<number>('refresh_calendar'),
   disconnectM365: () => invoke<void>('disconnect_m365'),
+
+  // ── Meetings ────────────────────────────────────────────────────────────
+  /** Remember the project a meeting series belongs to. */
+  setMeetingProject: (iCalUid: string, projectId: number) =>
+    invoke<void>('set_meeting_project', { iCalUid, projectId }),
+  /** Stop offering a meeting series (lunch, focus time). */
+  hideMeeting: (iCalUid: string) => invoke<void>('hide_meeting', { iCalUid }),
 
   // ── Timer ───────────────────────────────────────────────────────────────
   startTimer: (projectId: number, note: string): Promise<TimerState> =>

@@ -230,6 +230,10 @@ pub struct Settings {
     /// integration read-only. Defaults to on. There is deliberately no MCP tool
     /// that can change this — Claude must not be able to unlock itself.
     pub mcp_allow_writes: bool,
+    /// Minutes a normal working day is expected to account for, used only to
+    /// show a shortfall on the period views (`0` disables it). Applied to
+    /// Monday–Friday only, so a fortnightly total is not inflated by weekends.
+    pub expected_minutes_per_day: i64,
 }
 
 impl Default for Settings {
@@ -258,6 +262,9 @@ impl Default for Settings {
             daily_reminder_enabled: false,
             daily_reminder_time: "17:00".to_string(),
             mcp_allow_writes: true,
+            // Off by default: a shortfall only means something once the user
+            // says how long their normal day is.
+            expected_minutes_per_day: 0,
         }
     }
 }
@@ -553,6 +560,78 @@ pub struct SubGroupWarning {
     pub error: String,
 }
 
+// ── Period review (the "fill in my timesheet" view) ──────────────────────────
+
+/// A stretch of a day with neither tracked activity nor a logged entry, inside
+/// the day's recorded envelope.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GapRange {
+    /// Minutes from local midnight.
+    pub start_minutes: i64,
+    pub end_minutes: i64,
+}
+
+/// Matched activity on a day that no time entry covers yet — an auto-accept
+/// candidate the poller has not settled, or one skipped because it overlapped.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnclaimedSuggestion {
+    /// Local `YYYY-MM-DD`, so a range result stays attributable to one day.
+    pub date: String,
+    pub project_id: i64,
+    pub rule_id: i64,
+    pub start_minutes: i64,
+    pub end_minutes: i64,
+}
+
+/// One day of a period review. Everything the frontend needs to decide whether
+/// the day is done, without another IPC call.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayReview {
+    pub date: String,
+    /// Merged, filtered activity attributed to any project or not.
+    pub tracked_secs: i64,
+    /// Seconds of manually logged entries.
+    pub logged_secs: i64,
+    /// Tracked seconds no match rule claimed — the "unknown work" signal.
+    pub unclassified_secs: i64,
+    /// Weekday target from `Settings::expected_minutes_per_day`, or 0.
+    pub expected_minutes: i64,
+    pub entries: Vec<TimeEntry>,
+    /// The day note, or an empty string.
+    pub note: String,
+    /// Matched activity not yet covered by an entry.
+    pub suggestions: Vec<UnclaimedSuggestion>,
+    /// Calendar meetings on this day that no entry covers yet.
+    pub meetings: Vec<MeetingCandidate>,
+    /// Untracked holes inside the recorded day.
+    pub gaps: Vec<GapRange>,
+    /// Human-readable reasons this day needs a look. Empty means "nothing
+    /// obvious is missing".
+    pub attention: Vec<String>,
+    /// `!attention.is_empty()`, precomputed so a caller cannot forget the rule.
+    pub needs_attention: bool,
+}
+
+/// A whole pay period laid out for review.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodReview {
+    pub start_date: String,
+    pub end_date: String,
+    /// Every date in the range, in order — including days with no activity.
+    pub days: Vec<DayReview>,
+    pub total_tracked_secs: i64,
+    pub total_logged_secs: i64,
+    /// Sum of the weekday targets. 0 when `expected_minutes_per_day` is 0.
+    pub total_expected_minutes: i64,
+    pub total_unclassified_secs: i64,
+    /// Every unclaimed suggestion in the range, flattened and in time order.
+    pub suggestions: Vec<UnclaimedSuggestion>,
+}
+
 // ── Timer ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -609,6 +688,11 @@ impl Default for TimerState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarEvent {
+    /// Stable identity of the *series* (Graph's `iCalUId`, or a synthesised key
+    /// for other sources). Every occurrence of a recurring meeting shares it, so
+    /// it is what a remembered project or a dismissal is keyed on.
+    #[serde(default)]
+    pub i_cal_uid: String,
     pub subject: String,
     pub start_at: DateTime<Utc>,
     pub end_at: DateTime<Utc>,
@@ -616,6 +700,31 @@ pub struct CalendarEvent {
     pub organizer: String,
     pub location: String,
     pub is_teams_meeting: bool,
+    /// `accepted` / `declined` / `tentative` / `notResponded` / `organizer`.
+    /// A declined meeting is never offered as a candidate.
+    #[serde(default)]
+    pub response: String,
+}
+
+/// A calendar event that no time entry covers yet — the meeting half of the
+/// "what is still missing" view.
+///
+/// Meetings are the biggest blind spot in window tracking: the time is spent in
+/// a room or on a call, so nothing is recorded, and a fortnight later it is
+/// simply gone from memory.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingCandidate {
+    /// Series identity, used to remember a project and to dismiss the meeting.
+    pub i_cal_uid: String,
+    pub subject: String,
+    pub start_minutes: i64,
+    pub end_minutes: i64,
+    pub organizer: String,
+    pub location: String,
+    pub is_teams_meeting: bool,
+    /// The project this meeting was previously logged to, if any.
+    pub project_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -623,4 +732,15 @@ pub struct CalendarEvent {
 pub struct M365Status {
     pub connected: bool,
     pub account_name: String,
+}
+
+/// State of the device-code sign-in flow, polled by the frontend while it waits.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCodePrompt {
+    /// The short code the user types at `verification_uri`.
+    pub user_code: String,
+    pub verification_uri: String,
+    /// Seconds until the code stops being accepted.
+    pub expires_in: i64,
 }

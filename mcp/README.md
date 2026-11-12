@@ -5,6 +5,7 @@ Lets you ask Claude Desktop things like:
 - **"How much time did I spend on each project over the last fortnight?"**
 - **"Break my Lotteries time down by Jira ticket."**
 - **"What did I work on today?"**
+- **"What's still missing from my last fortnight's timesheet?"**
 - **"Set up match rules for these clients."**
 
 Claude calls this server, which reads your local Timesheeps SQLite database and returns real
@@ -52,19 +53,20 @@ That is where the installer puts it, next to `timesheeps.exe`. If you only ever 
 
 ### Reading
 
-| Tool                       | What it does                                                                                                                                                                                 |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_classified_totals`    | **The main one.** Time grouped by project (or by ticket, or by app) across a date range, with a per-day breakdown and a tracked-vs-logged comparison. Also reports activity no rule claimed. |
-| `get_day_summary_range`    | Per-day totals across a range, with an optional per-day project split, entries and title list.                                                                                               |
-| `get_day_summary`          | Everything about one day.                                                                                                                                                                    |
-| `get_activity_summary`     | Per-app / per-window-title time for one day.                                                                                                                                                 |
-| `get_window_summary_range` | Window-level activity across a range, reaggregated by app and title.                                                                                                                         |
-| `unclassified_titles`      | Titles that matched no rule, ranked by time — the raw material for new rules.                                                                                                                |
-| `get_match_rules`          | Every rule, its conditions, precedence position and effective ticket pattern.                                                                                                                |
-| `get_projects`             | Active projects (with ticket patterns) and archived ones.                                                                                                                                    |
-| `get_known_apps`           | Apps and sample titles actually seen recently, for writing conditions against real values.                                                                                                   |
-| `get_time_entries`         | Manually logged entries for one day.                                                                                                                                                         |
-| `get_settings`             | Tracking settings, including whether writes are allowed.                                                                                                                                     |
+| Tool                       | What it does                                                                                                                                                                                                                  |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_classified_totals`    | **The main one.** Time grouped by project (or by ticket, or by app) across a date range, with a per-day breakdown and a tracked-vs-logged comparison. Also reports activity no rule claimed.                                  |
+| `get_day_summary_range`    | Per-day totals across a range, with an optional per-day project split, entries and title list.                                                                                                                                |
+| `get_day_summary`          | Everything about one day.                                                                                                                                                                                                     |
+| `get_activity_summary`     | Per-app / per-window-title time for one day.                                                                                                                                                                                  |
+| `get_window_summary_range` | Window-level activity across a range, reaggregated by app and title.                                                                                                                                                          |
+| `unclassified_titles`      | Titles that matched no rule, ranked by time — the raw material for new rules.                                                                                                                                                 |
+| `get_period_review`        | **The one for filling in a timesheet.** Per day: tracked vs logged, existing entries, unclaimed suggestions, calendar meetings nothing covers, untracked gaps, the day note, and plain-English reasons the day is unfinished. |
+| `get_match_rules`          | Every rule, its conditions, precedence position and effective ticket pattern.                                                                                                                                                 |
+| `get_projects`             | Active projects (with ticket patterns) and archived ones.                                                                                                                                                                     |
+| `get_known_apps`           | Apps and sample titles actually seen recently, for writing conditions against real values.                                                                                                                                    |
+| `get_time_entries`         | Manually logged entries for one day.                                                                                                                                                                                          |
+| `get_settings`             | Tracking settings, including whether writes are allowed.                                                                                                                                                                      |
 
 ### Writing
 
@@ -72,13 +74,14 @@ Disabled unless **Settings → Claude AI → "Allow Claude to change projects, r
 entries"** is on. The setting is re-read on every call, and Claude cannot change it.
 
 | Tool                                                             | What it does                                                                                                                                         |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --------------------- | ---------------------------------------------------------------------------------------------- |
 | `create_projects` / `update_project`                             | Create and edit projects, including their default ticket pattern.                                                                                    |
 | `archive_project` / `unarchive_project` / `delete_project`       | Deletes need `confirm: true` and report everything they cascaded to.                                                                                 |
 | `create_match_rules` / `update_match_rule` / `delete_match_rule` | Rule CRUD. Updates return before/after so a change can be undone.                                                                                    |
 | `reorder_match_rules`                                            | Set the global precedence order.                                                                                                                     |
 | `validate_match_rules`                                           | Dry run. Compiles the rules and reports what each would claim over a range, and what existing rules already take. **Not gated** — it writes nothing. |
 | `log_time_entries` / `update_time_entry` / `delete_time_entry`   | Time entries, with `dry_run` support and overlap rejection.                                                                                          |
+| `set_day_note`                                                   | Save your own note for a day — what the work actually was. Claude is told to ask rather than invent it.                                              |     | `set_meeting_project` | Remember which project a meeting _series_ belongs to, so future occurrences arrive pre-filled. |
 
 Every write is validated before anything is committed: hex colours, non-blank condition values,
 compilable regexes, existing project ids, and non-overlapping time ranges. A batch is rejected whole

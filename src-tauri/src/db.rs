@@ -62,7 +62,16 @@ pub fn schema_is_current(conn: &Connection) -> Result<bool> {
 ///
 /// v3 adds the optional ticket/regex sub-group patterns and repairs
 /// negative-duration activity rows written by the old idle handling.
-const SCHEMA_VERSION: i64 = 3;
+///
+/// v4 adds `day_notes`, one free-text note per local date. Window titles say
+/// which app was in front; they never say what the work *was*, which is the
+/// thing a timesheet written two weeks later actually needs.
+///
+/// v5 adds the calendar cache (`calendar_events` plus the remembered-project
+/// and hidden-series tables). Meetings are the biggest blind spot in window
+/// tracking, so they are stored locally and reviewed like suggestions instead
+/// of being fetched per day and thrown away.
+const SCHEMA_VERSION: i64 = 5;
 
 /// Match rules: a named group of conditions, ordered by `position`.
 const CREATE_MATCH_RULES: &str = "
@@ -128,6 +137,57 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+
+        -- One free-text note per local date. Keyed by date rather than an id
+        -- because a day has at most one note and rewriting it must be an
+        -- upsert, not a growing list.
+        CREATE TABLE IF NOT EXISTS day_notes (
+            date       TEXT PRIMARY KEY,
+            note       TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+
+        -- Local cache of calendar events.
+        --
+        -- Meetings are the one part of the working day that leaves no trace in
+        -- window activity: the time goes into a room or a call. Caching them
+        -- locally means the review view can report them synchronously (and the
+        -- MCP can read them without the network), instead of the frontend
+        -- issuing one Graph call per day it happens to be showing.
+        --
+        -- `event_date` is the LOCAL date, so a day's meetings are one indexed
+        -- lookup and never depend on the reader's timezone maths.
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            i_cal_uid    TEXT NOT NULL,
+            started_at   TEXT NOT NULL,
+            ended_at     TEXT NOT NULL,
+            event_date   TEXT NOT NULL,
+            subject      TEXT NOT NULL DEFAULT '',
+            is_all_day   INTEGER NOT NULL DEFAULT 0,
+            organizer    TEXT NOT NULL DEFAULT '',
+            location     TEXT NOT NULL DEFAULT '',
+            is_teams     INTEGER NOT NULL DEFAULT 0,
+            response     TEXT NOT NULL DEFAULT '',
+            updated_at   TEXT NOT NULL,
+            PRIMARY KEY (i_cal_uid, started_at)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_events_date
+            ON calendar_events (event_date);
+
+        -- Which project a meeting series belongs to. Keyed by series, not by
+        -- occurrence, so logging one standup teaches the app about all of them.
+        CREATE TABLE IF NOT EXISTS calendar_event_projects (
+            i_cal_uid  TEXT PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE
+        );
+
+        -- A meeting series the user never wants offered again (lunch, focus
+        -- time, a blocked-out hour). Keyed by series for the same reason.
+        CREATE TABLE IF NOT EXISTS calendar_event_hidden (
+            i_cal_uid   TEXT PRIMARY KEY,
+            hidden_at   TEXT NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_activity_raw_app
@@ -310,6 +370,10 @@ fn seed_default_settings(conn: &Connection) -> Result<()> {
         ("daily_reminder_enabled", if defaults.daily_reminder_enabled { "1" } else { "0" }.to_string()),
         ("daily_reminder_time", defaults.daily_reminder_time.clone()),
         ("mcp_allow_writes", if defaults.mcp_allow_writes { "1" } else { "0" }.to_string()),
+        (
+            "expected_minutes_per_day",
+            defaults.expected_minutes_per_day.to_string(),
+        ),
     ];
     for (key, val) in pairs {
         conn.execute(
@@ -949,6 +1013,183 @@ pub fn delete_time_entry(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+// ── Day notes ─────────────────────────────────────────────────────────────────
+
+/// The note for one local date, or an empty string when there is none.
+pub fn get_day_note(conn: &Connection, date: &str) -> Result<String> {
+    Ok(conn
+        .query_row(
+            "SELECT note FROM day_notes WHERE date = ?1",
+            params![date],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .unwrap_or_default())
+}
+
+/// Upsert the note for a date. A blank note deletes the row rather than storing
+/// an empty one, so "no note" has a single representation.
+pub fn set_day_note(conn: &Connection, date: &str, note: &str) -> Result<()> {
+    let note = note.trim();
+    if note.is_empty() {
+        conn.execute("DELETE FROM day_notes WHERE date = ?1", params![date])?;
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO day_notes (date, note, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(date) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at",
+        params![date, note, chrono::Utc::now().to_rfc3339()],
+    )?;
+    Ok(())
+}
+
+/// Notes for every date in `[start, end]`, keyed by date. Missing dates are
+/// absent rather than blank.
+pub fn get_day_notes_between(
+    conn: &Connection,
+    start: &str,
+    end: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut stmt = conn.prepare(
+        "SELECT date, note FROM day_notes
+         WHERE date >= ?1 AND date <= ?2 AND note <> ''",
+    )?;
+    let rows = stmt.query_map(params![start, end], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+// ── Calendar cache ────────────────────────────────────────────────────────────
+
+/// One cached calendar event, as stored locally.
+#[derive(Debug, Clone)]
+pub struct StoredCalendarEvent {
+    pub i_cal_uid: String,
+    pub started_at: String,
+    pub ended_at: String,
+    pub event_date: String,
+    pub subject: String,
+    pub is_all_day: bool,
+    pub organizer: String,
+    pub location: String,
+    pub is_teams: bool,
+    pub response: String,
+}
+
+/// Replace the cached events that fall inside `[from_date, to_date]`.
+///
+/// Delete-then-insert rather than an upsert: Graph returns the full window every
+/// time, and a meeting that was cancelled or moved must disappear from the cache
+/// rather than linger as a phantom candidate. The remembered-project and hidden
+/// tables are separate and keyed by series, so this never loses them.
+pub fn replace_calendar_events(
+    conn: &Connection,
+    from_date: &str,
+    to_date: &str,
+    events: &[StoredCalendarEvent],
+) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "DELETE FROM calendar_events WHERE event_date >= ?1 AND event_date <= ?2",
+        params![from_date, to_date],
+    )?;
+
+    let mut stmt = conn.prepare(
+        "INSERT OR REPLACE INTO calendar_events
+             (i_cal_uid, started_at, ended_at, event_date, subject, is_all_day,
+              organizer, location, is_teams, response, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+    )?;
+
+    for e in events {
+        stmt.execute(params![
+            e.i_cal_uid,
+            e.started_at,
+            e.ended_at,
+            e.event_date,
+            e.subject,
+            e.is_all_day as i64,
+            e.organizer,
+            e.location,
+            e.is_teams as i64,
+            e.response,
+            now,
+        ])?;
+    }
+
+    Ok(())
+}
+
+/// Cached events for one local date, ordered by start.
+pub fn get_calendar_events_for_date(
+    conn: &Connection,
+    date: &str,
+) -> Result<Vec<StoredCalendarEvent>> {
+    let mut stmt = conn.prepare(
+        "SELECT i_cal_uid, started_at, ended_at, event_date, subject, is_all_day,
+                organizer, location, is_teams, response
+         FROM calendar_events WHERE event_date = ?1 ORDER BY started_at",
+    )?;
+    let rows = stmt.query_map(params![date], |row| {
+        Ok(StoredCalendarEvent {
+            i_cal_uid: row.get(0)?,
+            started_at: row.get(1)?,
+            ended_at: row.get(2)?,
+            event_date: row.get(3)?,
+            subject: row.get(4)?,
+            is_all_day: row.get::<_, i64>(5)? != 0,
+            organizer: row.get(6)?,
+            location: row.get(7)?,
+            is_teams: row.get::<_, i64>(8)? != 0,
+            response: row.get(9)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Series identity → remembered project id.
+pub fn get_calendar_event_projects(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, i64>> {
+    let mut stmt = conn.prepare("SELECT i_cal_uid, project_id FROM calendar_event_projects")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Remember which project a meeting series belongs to.
+pub fn set_calendar_event_project(
+    conn: &Connection,
+    i_cal_uid: &str,
+    project_id: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO calendar_event_projects (i_cal_uid, project_id)
+         VALUES (?1, ?2)",
+        params![i_cal_uid, project_id],
+    )?;
+    Ok(())
+}
+
+/// Series identities the user never wants offered again.
+pub fn get_hidden_calendar_series(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT i_cal_uid FROM calendar_event_hidden")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn hide_calendar_series(conn: &Connection, i_cal_uid: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO calendar_event_hidden (i_cal_uid, hidden_at)
+         VALUES (?1, ?2)",
+        params![i_cal_uid, chrono::Utc::now().to_rfc3339()],
+    )?;
+    Ok(())
+}
+
 // ── Filter rules ──────────────────────────────────────────────────────────────
 
 pub fn get_filter_rules(conn: &Connection) -> Result<Vec<FilterRule>> {
@@ -1084,6 +1325,7 @@ pub fn get_settings(conn: &Connection) -> Result<Settings> {
         daily_reminder_enabled: get_bool("daily_reminder_enabled", d.daily_reminder_enabled),
         daily_reminder_time: get_str("daily_reminder_time", &d.daily_reminder_time),
         mcp_allow_writes: get_bool("mcp_allow_writes", d.mcp_allow_writes),
+        expected_minutes_per_day: get("expected_minutes_per_day", d.expected_minutes_per_day),
     })
 }
 
@@ -1110,6 +1352,7 @@ pub fn save_settings(conn: &Connection, s: &Settings) -> Result<()> {
         ("daily_reminder_enabled", if s.daily_reminder_enabled { "1" } else { "0" }.to_string()),
         ("daily_reminder_time", s.daily_reminder_time.clone()),
         ("mcp_allow_writes", if s.mcp_allow_writes { "1" } else { "0" }.to_string()),
+        ("expected_minutes_per_day", s.expected_minutes_per_day.to_string()),
     ];
     for (key, val) in pairs {
         conn.execute(

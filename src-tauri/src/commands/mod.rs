@@ -1,10 +1,12 @@
 pub mod activity;
 pub mod apps;
 pub mod calendar;
+pub mod day_notes;
 pub mod filter_rules;
 pub mod permissions;
 pub mod project_match_rules;
 pub mod projects;
+pub mod review;
 pub mod settings;
 pub mod time_entries;
 pub mod timer;

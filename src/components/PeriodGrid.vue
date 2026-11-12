@@ -40,7 +40,7 @@
         <span
           v-if="hasUnlogged(date)"
           class="unlogged-dot"
-          title="Activity recorded but no time logged"
+          title="Activity recorded that is not (fully) logged"
         >
           ●
         </span>

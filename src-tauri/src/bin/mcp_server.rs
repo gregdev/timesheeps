@@ -413,9 +413,21 @@ fn get_day_summary(conn: &Connection, date: &str) -> Result<Value, String> {
     let totals =
         reporting::classify_range(conn, date, date, GroupBy::Project).map_err(|e| e.to_string())?;
     let day = totals.per_day.get(date).cloned().unwrap_or_default();
+    let note = db::get_day_note(conn, date).map_err(|e| e.to_string())?;
+
+    // Meetings the day's entries do not already cover — the part of the day
+    // window tracking cannot see at all.
+    let meetings = reporting::period_review(conn, date, date, None)
+        .map_err(|e| e.to_string())?
+        .days
+        .into_iter()
+        .next()
+        .map(|d| d.meetings)
+        .unwrap_or_default();
 
     Ok(json!({
         "date": date,
+        "note": note,
         "total_tracked_secs": day.tracked_secs,
         "total_tracked": fmt_dur(day.tracked_secs),
         "total_logged_secs": day.logged_secs,
@@ -425,6 +437,73 @@ fn get_day_summary(conn: &Connection, date: &str) -> Result<Value, String> {
         "by_project": totals.buckets,
         "activity_by_app": activity["activity_by_app"],
         "time_entries": time_entries_for(conn, date)?,
+        "meetings": meetings,
+    }))
+}
+
+/// The period review, with display strings alongside the authoritative seconds
+/// so the model does not have to format durations itself.
+fn get_period_review(conn: &Connection, args: &Value) -> Result<Value, String> {
+    let (start, end) = req_range(args)?;
+    let review = reporting::period_review(conn, &start, &end, arg_i64(args, "gap_min_secs"))
+        .map_err(|e| e.to_string())?;
+
+    let mut value = serde_json::to_value(&review).map_err(|e| e.to_string())?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "totalTrackedDisplay".to_string(),
+            json!(fmt_dur(review.total_tracked_secs)),
+        );
+        obj.insert(
+            "totalLoggedDisplay".to_string(),
+            json!(fmt_dur(review.total_logged_secs)),
+        );
+        obj.insert(
+            "totalExpectedDisplay".to_string(),
+            json!(if review.total_expected_minutes > 0 {
+                fmt_dur(review.total_expected_minutes * 60)
+            } else {
+                "no target set".to_string()
+            }),
+        );
+    }
+    Ok(value)
+}
+
+fn set_day_note(conn: &Connection, args: &Value) -> Result<Value, String> {
+    let date = req_str(args, "date")?;
+    if !is_valid_date(&date) {
+        return Err(format!("`date` must be YYYY-MM-DD, got {date:?}"));
+    }
+    // `note` is required but may be empty, which is how a note is cleared.
+    let note = args
+        .get("note")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "`note` is required (use an empty string to clear it)".to_string())?;
+
+    let before = db::get_day_note(conn, &date).map_err(|e| e.to_string())?;
+    db::set_day_note(conn, &date, note).map_err(|e| e.to_string())?;
+
+    Ok(json!({ "date": date, "before": before, "note": note.trim() }))
+}
+
+fn set_meeting_project(conn: &Connection, args: &Value) -> Result<Value, String> {
+    let i_cal_uid = req_str(args, "i_cal_uid")?;
+    let project_id = req_i64(args, "project_id")?;
+
+    // Validate the project first: a dangling mapping would silently never apply.
+    let project = db::get_projects(conn)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| format!("No project with id {project_id}"))?;
+
+    db::set_calendar_event_project(conn, &i_cal_uid, project_id).map_err(|e| e.to_string())?;
+
+    Ok(json!({
+        "i_cal_uid": i_cal_uid,
+        "project_id": project_id,
+        "project_name": project.name,
     }))
 }
 
@@ -1233,7 +1312,7 @@ fn delete_time_entry(conn: &Connection, args: &Value) -> Result<Value, String> {
 /// `validate_match_rules` is deliberately absent: it writes nothing, so it stays
 /// available when writes are off — the user can still have Claude propose rules
 /// and show what they would capture, then apply them by hand.
-const WRITE_TOOLS: [&str; 12] = [
+const WRITE_TOOLS: [&str; 14] = [
     "create_projects",
     "update_project",
     "archive_project",
@@ -1246,6 +1325,8 @@ const WRITE_TOOLS: [&str; 12] = [
     "log_time_entries",
     "update_time_entry",
     "delete_time_entry",
+    "set_day_note",
+    "set_meeting_project",
 ];
 
 fn write_gate_error() -> String {
@@ -1345,6 +1426,31 @@ fn tools_schema() -> Value {
                     "min_secs": { "type": "integer", "description": "Minimum total seconds across the whole range. Defaults to 60." }
                 },
                 "required": ["start_date", "end_date"]
+            }
+        },
+        {
+            "name": "get_period_review",
+            "description": "THE tool for \"what is still missing from my timesheet\". For every day in the range: tracked vs logged seconds, the day's existing entries, unclaimed suggestions (matched activity no entry covers, already de-overlapped), calendar meetings nothing covers yet, untracked gaps inside the recorded day, the user's own day note, and `attention` — plain-English reasons the day is unfinished. Work through the days it flags, then log_time_entries. Prefer this over get_day_summary_range when the question is what to fill in.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "start_date": date("First day, inclusive."),
+                    "end_date": date("Last day, inclusive."),
+                    "gap_min_secs": { "type": "integer", "description": "Shortest untracked stretch reported as a gap. Defaults to 1800 (30 minutes). Minimum 60." }
+                },
+                "required": ["start_date", "end_date"]
+            }
+        },
+        {
+            "name": "set_meeting_project",
+            "description": "Remember which project a calendar meeting series belongs to, e.g. \"Standup\" → Lotteries. Keyed on the series' iCalUid, which get_period_review returns as `iCalUid`, so one mapping covers every future occurrence — including recurrences that have not happened yet. Use it when the user tells you a recurring meeting belongs to a project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "i_cal_uid": { "type": "string", "description": "From a meeting in get_period_review." },
+                    "project_id": { "type": "integer" }
+                },
+                "required": ["i_cal_uid", "project_id"]
             }
         },
         {
@@ -1587,6 +1693,18 @@ fn tools_schema() -> Value {
                 },
                 "required": ["id", "confirm"]
             }
+        },
+        {
+            "name": "set_day_note",
+            "description": "Save the user's own note for a day — what they actually did, in their words. Window titles say which app was in front; they never say what the work was, and this note is what makes a timesheet writable weeks later. Ask the user for the content; do not invent it. An empty note clears it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "date": date("The day the note belongs to."),
+                    "note": { "type": "string", "description": "One or two lines, e.g. \"Standup, then ELMS-5813 validation work.\"" }
+                },
+                "required": ["date", "note"]
+            }
         }
     ])
 }
@@ -1612,6 +1730,7 @@ fn dispatch(conn: &Connection, name: &str, args: &Value) -> Result<Value, String
         }
         "get_window_summary_range" => get_window_summary_range(conn, args),
         "unclassified_titles" => get_unclassified_titles(conn, args),
+        "get_period_review" => get_period_review(conn, args),
         "get_match_rules" => get_match_rules(conn),
         "get_projects" => get_projects(conn),
         "get_known_apps" => get_known_apps(conn, args),
@@ -1638,6 +1757,8 @@ fn dispatch(conn: &Connection, name: &str, args: &Value) -> Result<Value, String
         "log_time_entries" => log_time_entries(conn, args),
         "update_time_entry" => update_time_entry(conn, args),
         "delete_time_entry" => delete_time_entry(conn, args),
+        "set_day_note" => set_day_note(conn, args),
+        "set_meeting_project" => set_meeting_project(conn, args),
 
         other => Err(format!("Unknown tool: {other}")),
     }
@@ -1815,7 +1936,9 @@ mod tests {
         for name in &names {
             let probe = match name.as_str() {
                 "get_classified_totals" | "get_day_summary_range" | "get_window_summary_range"
-                | "unclassified_titles" => json!({ "start_date": "2026-01-01", "end_date": "2026-01-01" }),
+                | "unclassified_titles" | "get_period_review" => {
+                    json!({ "start_date": "2026-01-01", "end_date": "2026-01-01" })
+                }
                 "create_projects" => json!({ "projects": [{ "name": "x" }] }),
                 "create_match_rules" | "validate_match_rules" => {
                     json!({ "rules": [{ "name": "x", "conditions": [] }] })

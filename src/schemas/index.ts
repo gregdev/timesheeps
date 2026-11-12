@@ -142,6 +142,11 @@ export const SettingsSchema = z.object({
    * projects, match rules and time entries. Claude cannot change this itself.
    */
   mcpAllowWrites: z.boolean(),
+  /**
+   * Minutes a normal working day should account for, applied to weekdays only.
+   * `0` disables the shortfall warning.
+   */
+  expectedMinutesPerDay: z.number(),
 })
 export type Settings = z.infer<typeof SettingsSchema>
 
@@ -186,6 +191,71 @@ export const WindowSummaryItemSchema = z.object({
 })
 export type WindowSummaryItem = z.infer<typeof WindowSummaryItemSchema>
 
+// ── Period review ─────────────────────────────────────────────────────────────
+
+/** A stretch of the day with neither tracked activity nor a logged entry. */
+export const GapRangeSchema = z.object({
+  startMinutes: z.number(),
+  endMinutes: z.number(),
+})
+export type GapRange = z.infer<typeof GapRangeSchema>
+
+/** Matched activity no time entry covers yet. */
+export const UnclaimedSuggestionSchema = z.object({
+  date: z.string(),
+  projectId: z.number(),
+  ruleId: z.number(),
+  startMinutes: z.number(),
+  endMinutes: z.number(),
+})
+export type UnclaimedSuggestion = z.infer<typeof UnclaimedSuggestionSchema>
+
+/** A calendar meeting that no time entry covers yet. */
+export const MeetingCandidateSchema = z.object({
+  /** Series identity — logging one occurrence teaches the app about the rest. */
+  iCalUid: z.string(),
+  subject: z.string(),
+  startMinutes: z.number(),
+  endMinutes: z.number(),
+  organizer: z.string(),
+  location: z.string(),
+  isTeamsMeeting: z.boolean(),
+  /** The project this series was previously logged to. */
+  projectId: z.number().nullable(),
+})
+export type MeetingCandidate = z.infer<typeof MeetingCandidateSchema>
+
+export const DayReviewSchema = z.object({
+  date: z.string(),
+  trackedSecs: z.number(),
+  loggedSecs: z.number(),
+  unclassifiedSecs: z.number(),
+  /** Weekday target, or 0 when no target is configured. */
+  expectedMinutes: z.number(),
+  entries: z.array(TimeEntrySchema),
+  note: z.string(),
+  suggestions: z.array(UnclaimedSuggestionSchema),
+  /** Calendar meetings on the day that no entry covers yet. */
+  meetings: z.array(MeetingCandidateSchema),
+  gaps: z.array(GapRangeSchema),
+  /** Plain-English reasons the day is unfinished. */
+  attention: z.array(z.string()),
+  needsAttention: z.boolean(),
+})
+export type DayReview = z.infer<typeof DayReviewSchema>
+
+export const PeriodReviewSchema = z.object({
+  startDate: z.string(),
+  endDate: z.string(),
+  days: z.array(DayReviewSchema),
+  totalTrackedSecs: z.number(),
+  totalLoggedSecs: z.number(),
+  totalExpectedMinutes: z.number(),
+  totalUnclassifiedSecs: z.number(),
+  suggestions: z.array(UnclaimedSuggestionSchema),
+})
+export type PeriodReview = z.infer<typeof PeriodReviewSchema>
+
 export const DaySearchResultSchema = z.object({
   date: z.string(),
   allBlocks: z.array(ActivityBlockSchema),
@@ -221,6 +291,8 @@ export type TimerState = z.infer<typeof TimerStateSchema>
 // ── Microsoft 365 / Calendar ─────────────────────────────────────────────────
 
 export const CalendarEventSchema = z.object({
+  /** Series identity; shared by every occurrence of a recurring meeting. */
+  iCalUid: z.string(),
   subject: z.string(),
   startAt: z.string(),
   endAt: z.string(),
@@ -228,6 +300,8 @@ export const CalendarEventSchema = z.object({
   organizer: z.string(),
   location: z.string(),
   isTeamsMeeting: z.boolean(),
+  /** `accepted` / `declined` / `tentative`, or empty when unknown. */
+  response: z.string(),
 })
 export type CalendarEvent = z.infer<typeof CalendarEventSchema>
 
@@ -236,3 +310,11 @@ export const M365StatusSchema = z.object({
   accountName: z.string(),
 })
 export type M365Status = z.infer<typeof M365StatusSchema>
+
+/** What the user is shown while a device-code sign-in is pending. */
+export const DeviceCodePromptSchema = z.object({
+  userCode: z.string(),
+  verificationUri: z.string(),
+  expiresIn: z.number(),
+})
+export type DeviceCodePrompt = z.infer<typeof DeviceCodePromptSchema>

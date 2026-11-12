@@ -335,38 +335,66 @@
     editingEntry.value = entry
   }
 
+  /**
+   * Why the last write from the entry picker failed, or null.
+   *
+   * The picker closes itself before the write is issued, so a rejected save has
+   * nowhere of its own to report — and an unhandled rejection reads to the user
+   * as "the app ignored the click", which is exactly how a fractional-minute
+   * payload hid for a while.
+   */
+  const saveError = ref<string | null>(null)
+  let saveErrorTimer: ReturnType<typeof setTimeout> | null = null
+
+  function showSaveError(err: unknown) {
+    console.error('[timesheeps] saving entry failed:', err)
+    saveError.value = err instanceof Error ? err.message : String(err)
+
+    if (saveErrorTimer) {
+      clearTimeout(saveErrorTimer)
+    }
+
+    saveErrorTimer = setTimeout(() => {
+      saveError.value = null
+    }, 6000)
+  }
+
   async function onModalSave(
     projectId: number,
     ranges: EntryRange[],
     note: string,
     autoTrack: boolean,
   ) {
-    if (editingEntry.value) {
-      // Editing always targets one existing entry, so only one range can apply.
-      const [range] = ranges
+    try {
+      if (editingEntry.value) {
+        // Editing always targets one existing entry, so only one range can apply.
+        const [range] = ranges
 
-      await dayStore.updateEntry(
-        editingEntry.value.id,
-        projectId,
-        range.startMinutes,
-        range.endMinutes,
-        note,
-      )
-      editingEntry.value = null
-    } else if (pendingCreate.value) {
-      const autoTrackAppName = pendingCreate.value.autoTrackAppName
+        await dayStore.updateEntry(
+          editingEntry.value.id,
+          projectId,
+          range.startMinutes,
+          range.endMinutes,
+          note,
+        )
+        editingEntry.value = null
+      } else if (pendingCreate.value) {
+        const autoTrackAppName = pendingCreate.value.autoTrackAppName
 
-      // Close the picker *before* any follow-up prompt. The auto-track conflict
-      // dialog is a sibling modal, and leaving `pendingCreate` set would render
-      // both at once with independent Escape/focus handling.
-      pendingCreate.value = null
+        // Close the picker *before* any follow-up prompt. The auto-track conflict
+        // dialog is a sibling modal, and leaving `pendingCreate` set would render
+        // both at once with independent Escape/focus handling.
+        pendingCreate.value = null
 
-      await dayStore.createEntries(projectId, ranges, note)
+        await dayStore.createEntries(projectId, ranges, note)
 
-      // Create auto-track rule if toggle was enabled
-      if (autoTrack && autoTrackAppName) {
-        await createAutoTrackRule(projectId, autoTrackAppName)
+        // Create auto-track rule if toggle was enabled
+        if (autoTrack && autoTrackAppName) {
+          await createAutoTrackRule(projectId, autoTrackAppName)
+        }
       }
+    } catch (err) {
+      showSaveError(err)
     }
   }
 
@@ -519,6 +547,10 @@
     if (mergeErrorTimer) {
       clearTimeout(mergeErrorTimer)
     }
+
+    if (saveErrorTimer) {
+      clearTimeout(saveErrorTimer)
+    }
   })
 
   // A different day has entirely different entries, so a selection cannot carry
@@ -557,6 +589,7 @@
           <span v-if="mergeError" class="selection-error">{{ mergeError }}</span>
         </template>
         <template v-else>My Time</template>
+        <span v-if="saveError" class="selection-error">{{ saveError }}</span>
       </div>
     </div>
 

@@ -406,7 +406,16 @@ export const useDayStore = defineStore('day', () => {
     return withHistory(async () => {
       const created = await Promise.all(
         ranges.map((r) =>
-          api.createTimeEntry(selectedDate.value, projectId, r.startMinutes, r.endMinutes, note),
+          api.createTimeEntry(
+            selectedDate.value,
+            projectId,
+            // The IPC payload is `i64` minutes, so a fractional value is
+            // rejected before it ever reaches the DB. Round at the single
+            // place entries are created rather than trusting every caller.
+            Math.round(r.startMinutes),
+            Math.round(r.endMinutes),
+            note,
+          ),
         ),
       )
       timeEntries.value = [...timeEntries.value, ...created].sort(
@@ -620,8 +629,13 @@ export const useDayStore = defineStore('day', () => {
     return rawSuggestions.value
       .map((s) => ({
         projectId: s.projectId,
-        startMinutes: isoToMinutes(s.startedAt),
-        endMinutes: isoToMinutes(s.endedAt),
+        // Whole minutes, not the fractional value `isoToMinutes` returns from
+        // the recorded seconds. Accepting a suggestion feeds these straight to
+        // `create_time_entry`, whose payload fields are `i64`, and serde
+        // rejects a fractional number outright — so the accept silently failed
+        // and left the suggestion on screen.
+        startMinutes: Math.round(isoToMinutes(s.startedAt)),
+        endMinutes: Math.round(isoToMinutes(s.endedAt)),
       }))
       .filter((s) => s.endMinutes > s.startMinutes)
       .filter(

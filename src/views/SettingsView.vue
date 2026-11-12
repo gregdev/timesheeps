@@ -830,10 +830,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-
-    a {
-      color: inherit;
-    }
   }
 
   .settings-section--card {
@@ -850,7 +846,6 @@
   }
 
   .hint a {
-    color: var(--primary);
     font-weight: 500;
   }
 

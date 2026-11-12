@@ -85,6 +85,17 @@
   --space-10: 2.5rem;
   --space-12: 3rem;
 
+  /*
+   * Link colour is its own token rather than `--primary`.
+   *
+   * `--primary` is a surface/fill colour: `#7a9e80` behind white button text is
+   * fine, but the same green as 14px text on `--bg` is about 2.8:1 — below the
+   * 4.5:1 that body-sized text needs. The link token is darkened for light mode
+   * and lightened for dark mode so it reads in both without touching buttons.
+   */
+  --link: #41624a;
+  --link-hover: #2f4a37;
+
   color-scheme: light;
   accent-color: #7a9e80;
 }
@@ -102,6 +113,8 @@
     --grid-line: rgba(255, 255, 255, 0.05);
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --link: #9dc4a4;
+    --link-hover: #b8d7be;
     color-scheme: dark;
   }
 }
@@ -118,6 +131,8 @@ html[data-theme='dark'] {
   --grid-line: rgba(255, 255, 255, 0.05);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --link: #9dc4a4;
+  --link-hover: #b8d7be;
   color-scheme: dark;
   accent-color: #7a9e80;
 }
@@ -134,6 +149,8 @@ html[data-theme='light'] {
   --grid-line: rgba(0, 0, 0, 0.05);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --link: #41624a;
+  --link-hover: #2f4a37;
   color-scheme: light;
   accent-color: #7a9e80;
 }
@@ -199,6 +216,33 @@ body {
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * One link style for the whole app.
+ *
+ * Without this a bare `<a>` renders in the browser's default blue (and purple
+ * once visited), which is jarring against the warm palette and close to
+ * unreadable on the dark theme. Components that want a different treatment — a
+ * muted footer link, a link that inherits its parent's colour — override it
+ * explicitly instead of relying on the UA stylesheet.
+ */
+a {
+  color: var(--link);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+/* Keyboard users get a visible ring; a mouse click does not draw one. */
+a:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 button {

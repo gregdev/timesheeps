@@ -86,36 +86,55 @@
 
       <div class="update-section">
         <button
-          class="btn-primary"
+          class="btn-primary update-btn"
           :disabled="updateStatus === 'checking' || installing"
           @click="checkForUpdates"
         >
           {{ updateStatus === 'checking' ? 'Checking…' : 'Check for updates' }}
         </button>
 
-        <p v-if="updateStatus === 'up-to-date'" class="status-msg status-ok">You're up to date.</p>
+        <!--
+          Result area with a reserved footprint.
 
-        <template v-else-if="updateStatus === 'available'">
-          <p v-if="timerRunning" class="status-msg status-new">
-            A timer is running — installing restarts the app and discards it.
+          The card is vertically centred in `.about-view`, so anything that
+          appears below the button grows the card and re-centres it — which
+          yanks the button out from under the pointer mid-click. Giving this
+          region the height of its tallest common state keeps the card's size,
+          and therefore its position, identical in every state.
+        -->
+        <div class="update-result">
+          <p v-if="updateStatus === 'up-to-date'" class="status-msg status-ok">
+            You're up to date.
           </p>
-          <p v-else class="status-msg status-new">Version {{ updateVersion }} is available.</p>
 
-          <button class="btn-primary" :disabled="installing" @click="installUpdate(timerRunning)">
-            {{ installing ? 'Installing…' : timerRunning ? 'Restart anyway' : 'Install & restart' }}
-          </button>
+          <template v-else-if="updateStatus === 'available'">
+            <p v-if="timerRunning" class="status-msg status-new">
+              A timer is running — installing restarts the app and discards it.
+            </p>
+            <p v-else class="status-msg status-new">Version {{ updateVersion }} is available.</p>
 
-          <p v-if="errorMsg" class="status-msg status-err">{{ errorMsg }}</p>
+            <button
+              class="btn-primary update-btn"
+              :disabled="installing"
+              @click="installUpdate(timerRunning)"
+            >
+              {{
+                installing ? 'Installing…' : timerRunning ? 'Restart anyway' : 'Install & restart'
+              }}
+            </button>
 
-          <a href="#" class="release-link" @click.prevent="openUrl(RELEASES_URL)">
-            Or download it from the releases page
-          </a>
-        </template>
+            <p v-if="errorMsg" class="status-msg status-err">{{ errorMsg }}</p>
 
-        <p v-else-if="updateStatus === 'error'" class="status-msg status-err">
-          {{ errorMsg || 'Could not check for updates.' }}
-          <a href="#" @click.prevent="openUrl(RELEASES_URL)">Check releases page.</a>
-        </p>
+            <a href="#" class="release-link" @click.prevent="openUrl(RELEASES_URL)">
+              Or download it from the releases page
+            </a>
+          </template>
+
+          <p v-else-if="updateStatus === 'error'" class="status-msg status-err">
+            {{ errorMsg || 'Could not check for updates.' }}
+            <a href="#" @click.prevent="openUrl(RELEASES_URL)">Check releases page.</a>
+          </p>
+        </div>
       </div>
     </div>
   </div>
@@ -159,10 +178,6 @@
     font-size: var(--text-lg);
     color: var(--text-muted);
     margin: 0;
-
-    a {
-      color: inherit;
-    }
   }
 
   .app-version {
@@ -179,6 +194,42 @@
     margin-top: var(--space-4);
   }
 
+  /*
+   * One width for every state, so "Check for updates" ↔ "Checking…" and
+   * "Install & restart" ↔ "Installing…" do not resize the button. Width changes
+   * are less distracting than height changes, but they are equally avoidable.
+   */
+  .update-btn {
+    min-width: 172px;
+  }
+
+  /*
+   * Reserved footprint for the result, sized to the tallest *reachable* state:
+   * status line + Install button + install-error line + release link.
+   *
+   * Measured, not guessed — the error line was the state that overflowed the
+   * first attempt at this. `min-height` rather than `height` so a message that
+   * wraps at a narrow window grows the area instead of spilling out of it.
+   */
+  .update-result {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 140px;
+  }
+
+  .release-link {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+
+  .release-link:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+
   .status-msg {
     font-size: var(--text-sm);
     margin: 0;
@@ -190,15 +241,6 @@
 
   .status-new {
     color: var(--text);
-  }
-
-  .status-new a {
-    color: var(--primary);
-    text-decoration: none;
-  }
-
-  .status-new a:hover {
-    text-decoration: underline;
   }
 
   .status-err {

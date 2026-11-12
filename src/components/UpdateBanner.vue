@@ -79,7 +79,10 @@
   onMounted(async () => {
     // Read the last known state first: the background check may have run before
     // this view existed, in which case the event has already been and gone.
-    api.getUpdateInfo().then(offer).catch(() => {})
+    api
+      .getUpdateInfo()
+      .then(offer)
+      .catch(() => {})
 
     try {
       unlisten = await listen<UpdateInfo>('update-available', (event) => offer(event.payload))
@@ -96,9 +99,7 @@
     <span class="ub-icon">↑</span>
 
     <template v-if="timerRunning">
-      <span class="ub-text">
-        A timer is running. Installing restarts the app and discards it.
-      </span>
+      <span class="ub-text">A timer is running. Installing restarts the app and discards it.</span>
       <button class="ub-btn ub-btn--primary" :disabled="installing" @click="install(true)">
         {{ installing ? 'Installing…' : 'Restart anyway' }}
       </button>
@@ -109,8 +110,11 @@
 
     <template v-else>
       <span class="ub-text">
-        Version <strong>{{ update.version }}</strong> is available
-        <span class="ub-from">(you have {{ update.currentVersion }})</span>.
+        Version
+        <strong>{{ update.version }}</strong>
+        is available
+        <span class="ub-from">(you have {{ update.currentVersion }})</span>
+        .
         <span v-if="error" class="ub-error">{{ error }}</span>
       </span>
       <button class="ub-btn ub-btn--primary" :disabled="installing" @click="install()">

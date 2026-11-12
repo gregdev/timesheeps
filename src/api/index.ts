@@ -155,7 +155,9 @@ export const api = {
   // ── Updates ──────────────────────────────────────────────────────────────
   /** Result of the last background check, or null when nothing is pending. */
   getUpdateInfo: (): Promise<UpdateInfo | null> =>
-    invoke<UpdateInfo | null>('get_update_info').then((v) => (v ? UpdateInfoSchema.parse(v) : null)),
+    invoke<UpdateInfo | null>('get_update_info').then((v) =>
+      v ? UpdateInfoSchema.parse(v) : null,
+    ),
   /** Check now, instead of waiting for the next periodic pass. */
   checkForUpdates: (): Promise<UpdateInfo | null> =>
     invoke<UpdateInfo | null>('check_for_updates').then((v) =>

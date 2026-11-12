@@ -14,9 +14,6 @@ importers:
       '@tauri-apps/plugin-opener':
         specifier: ^2.5.4
         version: 2.5.4
-      '@tauri-apps/plugin-updater':
-        specifier: ^2.10.1
-        version: 2.10.1
       '@vuepic/vue-datepicker':
         specifier: ^12.1.0
         version: 12.1.0(vue@3.5.34(typescript@5.6.3))
@@ -629,9 +626,6 @@ packages:
 
   '@tauri-apps/plugin-opener@2.5.4':
     resolution: {integrity: sha512-1HnPkb+AmgO29HBazm4uPLKB+r7zzcTBW1d0fyYp1uP+jwtpoiNDGKMMzz58SFp49nOIrxdE3aUJtT57lfO9CQ==}
-
-  '@tauri-apps/plugin-updater@2.10.1':
-    resolution: {integrity: sha512-NFYMg+tWOZPJdzE/PpFj2qfqwAWwNS3kXrb1tm1gnBJ9mYzZ4WDRrwy8udzWoAnfGCHLuePNLY1WVCNHnh3eRA==}
 
   '@types/esrecurse@4.3.1':
     resolution: {integrity: sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw==}
@@ -2003,10 +1997,6 @@ snapshots:
       '@tauri-apps/cli-win32-x64-msvc': 2.11.2
 
   '@tauri-apps/plugin-opener@2.5.4':
-    dependencies:
-      '@tauri-apps/api': 2.11.0
-
-  '@tauri-apps/plugin-updater@2.10.1':
     dependencies:
       '@tauri-apps/api': 2.11.0
 

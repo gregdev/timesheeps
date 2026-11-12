@@ -48,7 +48,7 @@ That is where the installer puts it, next to `timesheeps.exe`. If you only ever 
 `pnpm tauri dev`, point it at `src-tauri\target\debug\timesheeps-mcp.exe` instead.
 
 **Prefer "Set up Claude MCP" in the app** over hand-editing. It points Claude at a per-version
-*copy* of the server (`%LOCALAPPDATA%\app.timesheeps.Timesheeps\mcp\<version>\`), which is what lets
+_copy_ of the server (`%LOCALAPPDATA%\app.timesheeps.Timesheeps\mcp\<version>\`), which is what lets
 you install a new version while Claude Desktop is running — Windows locks the running image, so
 pointing Claude straight at the installed `timesheeps-mcp.exe` makes the installer fail until you
 kill Claude. The app also repoints an existing config at the new copy on each launch.

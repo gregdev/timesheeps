@@ -561,6 +561,52 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 - A dismissal is stored per version in `localStorage` (`updateDismissedVersion`), so a waved-away
   banner does not return on the next six-hourly check but a newer release still surfaces
 
+### Logging (`tauri-plugin-log` + the panic hook in `lib.rs`)
+
+- **Before this existed the app had no logging at all**, and that cost a real debugging session:
+  on 2026-11-18 it was launched by the autostart `Run` key at 12:04, wrote its WebView2 profile at
+  12:08, and then exited — leaving no `Application Error`, no WER report, no crash dump and no
+  stderr, because a Windows GUI build has nowhere to print. It was un-diagnosable by construction
+- Logs go to `app_log_dir()` (`%LOCALAPPDATA%\app.timesheeps.Timesheeps\logs\timesheeps.log` on
+  Windows), 5 MB per file with `RotationStrategy::KeepSome(5)`. The startup banner logs the version,
+  pid, arguments and the log directory, so the file is findable from its own first line
+- `install_panic_hook()` runs at the top of `setup`, **after** the log plugin has initialised and
+  **before** `db::open`, so the likeliest failures are covered. It logs `panic: {info}` and then
+  chains to the previous hook (keeping the default stderr output for dev)
+- The builder tail is `unwrap_or_else(|e| { log::error!(...); exit(1) })`, **not** `.expect(...)`.
+  A failed `setup` (e.g. `db::open` returning `Err`) surfaces through `run()`, so it now lands in
+  the log instead of vanishing. Do not "simplify" this back to `.expect`
+- Rust-side logging needs no capability entry: `log:default` is only required for the JS API, which
+  this app does not use
+
+### Watchdog scheduled task (`watchdog.rs`)
+
+- A `Run` key is evaluated **once per logon and never retried**, so it cannot recover from a launch
+  that died seconds later. On 2026-11-18 the laptop was then only ever woken from Modern Standby
+  (never rebooted or logged off), so nothing retried for **eight days** and five working days of
+  activity were never recorded. The scheduled task is the retry
+- It is created by **shelling out to `schtasks /Create /XML`**, not by a crate. The XML is written
+  as UTF-16 **with a BOM** — `schtasks` rejects UTF-8 outright
+- Two triggers: `LogonTrigger` (30 s delay, replaces the Run key's one-shot behaviour) and a
+  `CalendarTrigger` repeating every `REPEAT_MINUTES` (15) with `Duration P1D`. The daily trigger
+  re-arms the repetition each day, so it effectively runs forever
+- `ExecutionTimeLimit` **must** be `PT0S`. The launched process *is* the task, so any finite limit
+  would kill a running Timesheeps out from under the user
+- `MultipleInstancesPolicy` is `IgnoreNew`, so ticks are ignored while the app (the task's own
+  process) is still alive. `tauri-plugin-single-instance` is the second line of defence and covers
+  manually-launched copies. **It must stay the first plugin registered in `lib.rs`** — if it moved
+  after anything that touches the DB or the tray, a watchdog tick could open the database twice
+- The single-instance callback checks for `--hidden` in the incoming argv and does **nothing** in
+  that case. Without that guard, every 15-minute tick would pop the window up over whatever the
+  user was doing, because autostart and the watchdog always launch with `--hidden`
+- Driven by the **existing `start_on_login` setting** (no new field): "start at login" is read as
+  "stay running". Synced in `setup` and again from `save_settings` (on a short-lived thread, since
+  `schtasks` is a blocking spawn). A refusal from Task Scheduler (policy, locked-down machine) is
+  logged and ignored — the `Run` key remains the primary mechanism
+- **Debug builds skip installing it** unless `TIMESHEEPS_WATCHDOG=1`, because the task would point
+  at `target\debug\timesheeps.exe`, which the next `cargo build` replaces
+- Removing the setting deletes the task with `schtasks /Delete /F`
+
 ### Settings defaults (Settings::default in models.rs)
 
 - `min_duration_secs`: 300
@@ -592,6 +638,13 @@ Vec<SubGroupWarning>)`. `compile()` itself stays matching-only, so nothing about
 
 ## Known issues / things not yet verified
 
+- The watchdog task is created **on launch**, so an existing install only gains it after a rebuild
+  and reinstall. Until then the `Run` key is the only autostart mechanism
+- Because `tauri-plugin-single-instance` is now registered, a `pnpm tauri dev` build will **hand off
+  and exit** while the installed build is running (same bundle identifier ⇒ same mutex). Close the
+  installed app before launching a dev build, or expect it to vanish immediately
+- The 2026-11-18 silent exit that motivated the logging is still **unexplained**. The logs and panic
+  hook are in place to catch it next time; nothing about the original cause has been identified
 - Live window tracking has not been watched over a full working day; the MCP server and the DB
   pipeline have been exercised, but not continuous recording
 - **`update_activity_end` clamps `ended_at` to `started_at`**, because idle detection computes

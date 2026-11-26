@@ -14,6 +14,7 @@ mod nl_query;
 mod reminder;
 mod timer;
 mod updater;
+mod watchdog;
 
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -27,17 +28,78 @@ pub struct AppState {
     pub db: Arc<Mutex<rusqlite::Connection>>,
 }
 
+/// Route panics to the log.
+///
+/// A Windows GUI build has no console, so a panic used to disappear without a
+/// trace: no WER report (that covers native faults only), no stderr, nothing at
+/// all. On 2026-11-18 the app started from the Run key, created its WebView2
+/// profile and then exited, and there was no way to tell why. The logging
+/// plugin is initialised before `setup` runs, so `log::error!` from here always
+/// reaches the log file.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        previous(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let start_hidden = std::env::args().any(|a| a == "--hidden");
 
     tauri::Builder::default()
+        // **Must be first.** The watchdog task re-launches this executable every
+        // 15 minutes; each of those invocations has to hand its arguments to the
+        // running copy and exit, so that ticking costs one short-lived process
+        // and nothing else.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `--hidden` is how autostart and the watchdog launch us. The user
+            // did not ask for a window in that case, so do not steal focus from
+            // whatever they are actually doing.
+            if argv.iter().any(|a| a == "--hidden") {
+                log::debug!("second instance launched with --hidden; leaving the window alone");
+                return;
+            }
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                // 5 MB x 5 keeps a couple of weeks of a long-running app without
+                // letting the folder grow without bound.
+                .max_file_size(5 * 1024 * 1024)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("timesheeps".to_string()),
+                    },
+                ))
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                ))
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            install_panic_hook();
+            log::info!(
+                "Timesheeps {} starting (pid {}, args {:?})",
+                app.package_info().version,
+                std::process::id(),
+                std::env::args().skip(1).collect::<Vec<_>>()
+            );
+            if let Ok(dir) = app.path().app_log_dir() {
+                log::info!("logs: {}", dir.display());
+            }
 
             // Initialise the database
             let conn = db::open(&handle)?;
@@ -51,6 +113,16 @@ pub fn run() {
                 } else {
                     let _ = autolaunch.disable();
                 }
+
+                // A `Run` key is evaluated once per logon and never retried, so
+                // it cannot recover from a launch that died seconds later. The
+                // scheduled task is the retry. `schtasks` is a blocking spawn,
+                // so keep it off the startup path.
+                let watchdog_handle = handle.clone();
+                let watchdog_enabled = settings.start_on_login;
+                tauri::async_runtime::spawn_blocking(move || {
+                    watchdog::sync(&watchdog_handle, watchdog_enabled);
+                });
             }
 
             app.manage(AppState {
@@ -221,5 +293,10 @@ pub fn run() {
             commands::updater::install_update,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running timesheeps");
+        // Logged rather than `.expect`ed: this is one of the paths that used to
+        // exit silently, and a failed `setup` (above) surfaces here.
+        .unwrap_or_else(|e| {
+            log::error!("fatal: Timesheeps exited: {e}");
+            std::process::exit(1);
+        });
 }

@@ -419,6 +419,11 @@
                 <span v-if="savedField === 'startOnLogin'" class="field-check">✓</span>
               </Transition>
             </label>
+            <p class="field-hint">
+              Also keeps it running: a Windows scheduled task retries every 15 minutes if Timesheeps
+              is not open. A login entry alone is only read once, so a launch that failed would not
+              be retried until the next reboot.
+            </p>
           </div>
           <div class="form-group form-group--inline">
             <label class="checkbox-label">
@@ -663,8 +668,8 @@
           <h2>Microsoft 365 Calendar</h2>
 
           <label>
-            Connect your Outlook / Microsoft 365 calendar so meetings appear on your timeline and
-            in the period review. Meetings leave no trace in window activity, so without this the
+            Connect your Outlook / Microsoft 365 calendar so meetings appear on your timeline and in
+            the period review. Meetings leave no trace in window activity, so without this the
             biggest part of a normal day is invisible when you fill in a timesheet.
           </label>
 
@@ -677,17 +682,17 @@
               ✓ Connected as
               <strong>{{ settingsStore.m365Status.accountName }}</strong>
             </span>
-            <button
-              class="btn-secondary"
-              :disabled="calendarRefreshing"
-              @click="refreshCalendar"
-            >
+            <button class="btn-secondary" :disabled="calendarRefreshing" @click="refreshCalendar">
               {{ calendarRefreshing ? 'Refreshing…' : 'Refresh now' }}
             </button>
             <button class="btn-primary" @click="settingsStore.disconnectM365()">Disconnect</button>
           </div>
 
-          <div v-else-if="settingsStore.m365DeviceCode" class="device-code" style="margin-top: 0.75rem">
+          <div
+            v-else-if="settingsStore.m365DeviceCode"
+            class="device-code"
+            style="margin-top: 0.75rem"
+          >
             <p class="field-hint">Enter this code at {{ settingsStore.m365VerificationUri }}:</p>
             <p class="device-code-value">{{ settingsStore.m365DeviceCode }}</p>
             <p class="field-hint">Waiting for you to finish signing in…</p>
@@ -720,9 +725,12 @@
               >
                 app registration
               </a>
-              with <em>Allow public client flows</em> enabled and the delegated
-              <em>Calendars.Read</em> permission. A build from its author can ship that ID, so this
-              field is empty only the first time.
+              with
+              <em>Allow public client flows</em>
+              enabled and the delegated
+              <em>Calendars.Read</em>
+              permission. A build from its author can ship that ID, so this field is empty only the
+              first time.
             </p>
           </div>
         </section>

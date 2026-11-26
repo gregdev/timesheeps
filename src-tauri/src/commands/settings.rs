@@ -26,6 +26,14 @@ pub fn save_settings(
     } else {
         autolaunch.disable().map_err(|e| e.to_string())?;
     }
+
+    // The scheduled-task fallback follows the same toggle: "start at login"
+    // means "stay running", and a logon-only `Run` key cannot promise that.
+    // It shells out to `schtasks`, so do not block the IPC call on it.
+    let watchdog_app = app.clone();
+    let watchdog_enabled = settings.start_on_login;
+    std::thread::spawn(move || crate::watchdog::sync(&watchdog_app, watchdog_enabled));
+
     Ok(())
 }
 
